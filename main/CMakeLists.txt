@@ -1,0 +1,34 @@
+# Projet nspanel-ha — Sonoff NSPanel (ESP32 + écran Nextion déporté)
+
+idf_component_register(
+    SRCS
+        "app_main.c"
+        "app_diag.c"
+        "bsp/nextion.c"
+        "bsp/nspanel_io.c"
+        "net/app_config.c"
+        "net/wifi.c"
+        "net/config_portal.c"
+        "net/dev_portal.c"
+        "ota/tft_ota.c"
+    INCLUDE_DIRS
+        "."
+        "bsp"
+        "net"
+        "ha"
+        "ui"
+        "ota"
+    REQUIRES
+        driver
+        esp_adc
+        esp_wifi
+        esp_netif
+        esp_event
+        esp_http_client
+        esp_http_server
+        esp_websocket_client
+        json
+        nvs_flash
+        esp_https_ota
+        app_update
+)

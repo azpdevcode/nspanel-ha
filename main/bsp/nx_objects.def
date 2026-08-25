@@ -1,0 +1,92 @@
+/*
+ * Registre des objets Nextion écrits par le firmware. Source unique de vérité,
+ * tenue synchrone avec design/HMI-SPEC.md.
+ *
+ * NX_OBJ(énum, page, "nom Nextion", "attribut de sonde")
+ *
+ * Convention : le PREMIER NX_OBJ rencontré pour une page donnée en est l'ancre
+ * (nextion.c le déduit en scannant ce fichier dans l'ordre) — sa présence seule
+ * décide si la page est jouable (nx_page_present()). Les hotspots de navigation
+ * ne sont pas dans ce registre : un hotspot absent ne génère simplement jamais
+ * d'événement tactile, ce qui est déjà une dégradation silencieuse.
+ */
+
+/* --- boot (ancre : tStat) --- */
+NX_OBJ(BOOT_STATUS,     NXP_BOOT,    "tStat",  "txt")
+NX_OBJ(BOOT_PROGRESS,   NXP_BOOT,    "jProg",  "val")
+
+/* --- home (ancre : tClock) --- */
+NX_OBJ(HOME_CLOCK,      NXP_HOME,    "tClock", "txt")
+NX_OBJ(HOME_DATE,       NXP_HOME,    "tDate",  "txt")
+NX_OBJ(HOME_ROOM,       NXP_HOME,    "tRoom",  "txt")
+NX_OBJ(HOME_LIGHTS,     NXP_HOME,    "tLights","txt")
+NX_OBJ(HOME_TEMP,       NXP_HOME,    "tTemp",  "txt")
+NX_OBJ(HOME_SET,        NXP_HOME,    "tSet",   "txt")
+NX_OBJ(HOME_WX_PIC,     NXP_HOME,    "pWx",    "val")
+NX_OBJ(HOME_WX_TEMP,    NXP_HOME,    "tWxT",   "txt")
+NX_OBJ(HOME_WX_COND,    NXP_HOME,    "tWxC",   "txt")
+
+/* --- lights (ancre : tRoom) --- */
+NX_OBJ(LIGHTS_ROOM,     NXP_LIGHTS,  "tRoom",  "txt")
+NX_OBJ(LIGHTS_NAME0,    NXP_LIGHTS,  "tN0",    "txt")
+NX_OBJ(LIGHTS_NAME1,    NXP_LIGHTS,  "tN1",    "txt")
+NX_OBJ(LIGHTS_NAME2,    NXP_LIGHTS,  "tN2",    "txt")
+NX_OBJ(LIGHTS_NAME3,    NXP_LIGHTS,  "tN3",    "txt")
+NX_OBJ(LIGHTS_NAME4,    NXP_LIGHTS,  "tN4",    "txt")
+NX_OBJ(LIGHTS_NAME5,    NXP_LIGHTS,  "tN5",    "txt")
+NX_OBJ(LIGHTS_NAME6,    NXP_LIGHTS,  "tN6",    "txt")
+NX_OBJ(LIGHTS_NAME7,    NXP_LIGHTS,  "tN7",    "txt")
+NX_OBJ(LIGHTS_BTN0,     NXP_LIGHTS,  "bN0",    "pco")
+NX_OBJ(LIGHTS_BTN1,     NXP_LIGHTS,  "bN1",    "pco")
+NX_OBJ(LIGHTS_BTN2,     NXP_LIGHTS,  "bN2",    "pco")
+NX_OBJ(LIGHTS_BTN3,     NXP_LIGHTS,  "bN3",    "pco")
+NX_OBJ(LIGHTS_BTN4,     NXP_LIGHTS,  "bN4",    "pco")
+NX_OBJ(LIGHTS_BTN5,     NXP_LIGHTS,  "bN5",    "pco")
+NX_OBJ(LIGHTS_BTN6,     NXP_LIGHTS,  "bN6",    "pco")
+NX_OBJ(LIGHTS_BTN7,     NXP_LIGHTS,  "bN7",    "pco")
+NX_OBJ(LIGHTS_SLIDER0,  NXP_LIGHTS,  "hN0",    "val")
+NX_OBJ(LIGHTS_SLIDER1,  NXP_LIGHTS,  "hN1",    "val")
+NX_OBJ(LIGHTS_SLIDER2,  NXP_LIGHTS,  "hN2",    "val")
+NX_OBJ(LIGHTS_SLIDER3,  NXP_LIGHTS,  "hN3",    "val")
+NX_OBJ(LIGHTS_SLIDER4,  NXP_LIGHTS,  "hN4",    "val")
+NX_OBJ(LIGHTS_SLIDER5,  NXP_LIGHTS,  "hN5",    "val")
+NX_OBJ(LIGHTS_SLIDER6,  NXP_LIGHTS,  "hN6",    "val")
+NX_OBJ(LIGHTS_SLIDER7,  NXP_LIGHTS,  "hN7",    "val")
+
+/* --- climate (ancre : tCur) --- */
+NX_OBJ(CLIMATE_CUR,     NXP_CLIMATE, "tCur",   "txt")
+NX_OBJ(CLIMATE_SET,     NXP_CLIMATE, "tSet",   "txt")
+NX_OBJ(CLIMATE_ACTION,  NXP_CLIMATE, "tAction","txt")
+
+/* --- weather (ancre : tNow) --- */
+NX_OBJ(WX_NOW,          NXP_WEATHER, "tNow",   "txt")
+NX_OBJ(WX_COND,         NXP_WEATHER, "tCond",  "txt")
+NX_OBJ(WX_PIC,          NXP_WEATHER, "pNow",   "val")
+NX_OBJ(WX_HUM,          NXP_WEATHER, "tHum",   "txt")
+NX_OBJ(WX_WIND,         NXP_WEATHER, "tWind",  "txt")
+NX_OBJ(WX_PRES,         NXP_WEATHER, "tPres",  "txt")
+NX_OBJ(WX_DAY0,         NXP_WEATHER, "tD0",    "txt")
+NX_OBJ(WX_DAY1,         NXP_WEATHER, "tD1",    "txt")
+NX_OBJ(WX_DAY2,         NXP_WEATHER, "tD2",    "txt")
+NX_OBJ(WX_DAY3,         NXP_WEATHER, "tD3",    "txt")
+NX_OBJ(WX_HI0,          NXP_WEATHER, "tHi0",   "txt")
+NX_OBJ(WX_HI1,          NXP_WEATHER, "tHi1",   "txt")
+NX_OBJ(WX_HI2,          NXP_WEATHER, "tHi2",   "txt")
+NX_OBJ(WX_HI3,          NXP_WEATHER, "tHi3",   "txt")
+NX_OBJ(WX_LO0,          NXP_WEATHER, "tLo0",   "txt")
+NX_OBJ(WX_LO1,          NXP_WEATHER, "tLo1",   "txt")
+NX_OBJ(WX_LO2,          NXP_WEATHER, "tLo2",   "txt")
+NX_OBJ(WX_LO3,          NXP_WEATHER, "tLo3",   "txt")
+NX_OBJ(WX_PIC0,         NXP_WEATHER, "pD0",    "val")
+NX_OBJ(WX_PIC1,         NXP_WEATHER, "pD1",    "val")
+NX_OBJ(WX_PIC2,         NXP_WEATHER, "pD2",    "val")
+NX_OBJ(WX_PIC3,         NXP_WEATHER, "pD3",    "val")
+
+/* --- cfg (ancre : tRoom) --- */
+NX_OBJ(CFG_ROOM,        NXP_CFG,     "tRoom",  "txt")
+NX_OBJ(CFG_SSID,        NXP_CFG,     "tSsid",  "txt")
+NX_OBJ(CFG_IP,          NXP_CFG,     "tIp",    "txt")
+NX_OBJ(CFG_HA,          NXP_CFG,     "tHa",    "txt")
+NX_OBJ(CFG_VER,         NXP_CFG,     "tVer",   "txt")
+NX_OBJ(CFG_DIM,         NXP_CFG,     "hDim",   "val")
+NX_OBJ(CFG_SLEEP,       NXP_CFG,     "hSleep", "val")

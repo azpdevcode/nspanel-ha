@@ -1,0 +1,8 @@
+/* Pages du .HMI. Un NX_PAGE par page Nextion, dans l'ordre d'apparition dans
+ * l'Editor (l'index doit correspondre : page 0 = premier NX_PAGE, etc.). */
+NX_PAGE(NXP_BOOT,    "boot")
+NX_PAGE(NXP_HOME,    "home")
+NX_PAGE(NXP_LIGHTS,  "lights")
+NX_PAGE(NXP_CLIMATE, "climate")
+NX_PAGE(NXP_WEATHER, "weather")
+NX_PAGE(NXP_CFG,     "cfg")

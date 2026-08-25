@@ -1,0 +1,55 @@
+menu "NSPanel HA configuration"
+
+    menu "WiFi"
+        config WIFI_SSID
+            string "WiFi SSID (repli ; configuré depuis le portail web, persisté en NVS)"
+            default ""
+        config WIFI_PASSWORD
+            string "WiFi password (repli ; configuré depuis le portail web, persisté en NVS)"
+            default ""
+        config WIFI_MAX_RETRY
+            int "Max connection retries before giving up"
+            default 10
+    endmenu
+
+    menu "Home Assistant"
+        config HA_BASE_URL
+            string "Home Assistant base URL (repli ; configuré via le portail web)"
+            default ""
+            help
+                Repli compile-time. En pratique configuré via le portail web local
+                (http://<ip-panneau>/) et persisté en NVS.
+                Ex. http://192.168.1.10:8123
+
+        config HA_TOKEN
+            string "HA long-lived access token (repli ; collé via le portail web)"
+            default ""
+
+        config HA_WEATHER_ENTITY
+            string "Weather entity_id for the Météo page"
+            default "weather.meteo_france_forecast"
+            help
+                Entité météo (domaine weather.) interrogée via weather.get_forecasts
+                sur le WebSocket HA.
+
+        config HA_POLL_INTERVAL_MS
+            int "State polling interval (ms)"
+            default 300000
+            range 1000 600000
+            help
+                Filet de resync : les états sont poussés en temps réel via le
+                WebSocket HA (ha_ws). Le poll ne sert que de garde-fou.
+
+        config HA_RELAY1_ENTITY
+            string "Entité miroir HA du relais 1 (vide = pas de miroir)"
+            default ""
+            help
+                Entité (typiquement input_boolean.*) basculée en écho quand le
+                relais 1 change localement, et inversement.
+
+        config HA_RELAY2_ENTITY
+            string "Entité miroir HA du relais 2 (vide = pas de miroir)"
+            default ""
+    endmenu
+
+endmenu

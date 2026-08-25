@@ -1,0 +1,124 @@
+/*
+ * Pilote de l'écran Nextion déporté (STM32G0, UART, protocole ASCII + retours
+ * binaires). Remplace toute la couche LVGL du panneau P4 : il n'y a ici ni
+ * framebuffer ni rendu côté ESP32, seulement des commandes texte et des
+ * événements tactiles.
+ *
+ * Tolérance au TFT partiel (cf. plan) : chaque objet écrit par le firmware est
+ * déclaré dans nx_objects.def et sondé une fois au boot (nextion_probe()).
+ * Écrire sur un objet absent est un no-op silencieux — jamais un blocage.
+ */
+#pragma once
+
+#include <stdint.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include "esp_err.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* --- Pages, générées depuis nx_pages.def --- */
+typedef enum {
+#define NX_PAGE(id, name) id,
+#include "nx_pages.def"
+#undef NX_PAGE
+    NXP_COUNT
+} nx_page_t;
+
+/* --- Objets écrits par le firmware, générés depuis nx_objects.def --- */
+typedef enum {
+#define NX_OBJ(id, page, name, attr) id,
+#include "nx_objects.def"
+#undef NX_OBJ
+    NX_OBJ_COUNT
+} nx_obj_t;
+
+/* Événement tactile brut (retour 0x65 du protocole Nextion). */
+typedef struct {
+    uint8_t page;
+    uint8_t cid;      /* id du composant dans la page */
+    uint8_t pressed;  /* 1 = appui, 0 = relâchement */
+} nx_touch_t;
+
+/**
+ * @brief Initialise l'UART vers l'écran, négocie le débit, sonde les objets.
+ *
+ * Ordre : GPIO alimentation écran (voir nspanel_io.h) doit déjà être haut.
+ * Ouvre à 115200, tente de monter à 921600 (repli silencieux sur 115200 si
+ * l'écran ne répond pas au nouveau débit), puis appelle nextion_probe().
+ * Seul échec fatal : l'UART ne s'ouvre pas du tout (matériel absent).
+ */
+esp_err_t nextion_init(void);
+
+/**
+ * @brief (Re)sonde tous les objets de nx_objects.def et met à jour le cache NVS.
+ *
+ * Lit d'abord la Variable globale `vSpec` (révision de la spec HMI) :
+ *  - absente → écran d'origine ou HMI non conforme : tout est marqué absent,
+ *    aucun sondage supplémentaire n'est tenté.
+ *  - présente et déjà connue en NVS (même révision) → bitmap rechargé du cache,
+ *    pas de sondage réseau.
+ *  - présente et nouvelle → sondage complet (`get <nom>.<attr>` par objet),
+ *    résultat mis en cache NVS sous cette révision.
+ *
+ * Suspend temporairement le traitement des événements tactiles pendant le
+ * sondage (aller-retours synchrones sur le même UART).
+ */
+void nextion_probe(void);
+
+/** @brief Force un nouveau sondage complet au prochain nextion_probe() (ignore le cache NVS). */
+void nextion_force_reprobe(void);
+
+/** @brief true si l'objet a été détecté présent dans le .tft actuel. */
+bool nx_present(nx_obj_t o);
+
+/** @brief true si la page est utilisable (son objet d'ancrage est présent). */
+bool nx_page_present(nx_page_t p);
+
+/* --- Écritures, no-op silencieux si l'objet est absent (retour false) --- */
+bool nx_set_txt(nx_obj_t o, const char *s);
+bool nx_set_val(nx_obj_t o, int32_t v);
+bool nx_set_pco(nx_obj_t o, uint16_t rgb565);
+bool nx_vis(nx_obj_t o, bool on);
+
+/** @brief Change de page. No-op (false) si la page est absente du .tft. */
+bool nx_page(nx_page_t p);
+
+/** @brief Rétroéclairage 0-100 (commande `dim=`). Toujours tentée (page-agnostique). */
+void nx_dim(uint8_t pct);
+
+/** @brief Envoie une commande brute formatée (le terminateur FF FF FF est ajouté). */
+void nx_cmd(const char *fmt, ...);
+
+/**
+ * @brief Attend un événement tactile.
+ * @param timeout_ms 0 = non bloquant, sinon délai max.
+ * @return true si un événement a été récupéré dans *out.
+ */
+bool nextion_get_touch(nx_touch_t *out, uint32_t timeout_ms);
+
+/**
+ * @brief Pont série transparent USB (UART0) <-> écran (UART2), pour téléverser
+ * un .tft depuis Nextion Editor comme sur un écran nu.
+ *
+ * Bloquant : ne retourne jamais (le panneau doit être redémarré pour en sortir).
+ * À appeler depuis une tâche dédiée, jamais depuis ui_worker.
+ */
+void nextion_bridge_run(void) __attribute__((noreturn));
+
+/* --- Upload TFT-OTA (protocole Nextion "whmi-wri", v1.2) ---
+ * Utilisé par ota/tft_ota.c ; primitives bas niveau uniquement — la tâche RX
+ * tactile est suspendue le temps du transfert, comme pour nextion_probe(). */
+
+/** Annonce le transfert (taille + débit) et attend l'accusé 0x05 initial. */
+bool nx_tft_upload_begin(uint32_t size_bytes, uint32_t baud, uint32_t timeout_ms);
+/** Envoie un bloc puis attend son accusé 0x05 (renvoie false si absent/erreur). */
+bool nx_tft_upload_chunk(const uint8_t *data, size_t len, uint32_t timeout_ms);
+/** Termine le transfert : reprend la tâche RX, renégocie le débit normal, force un re-sondage. */
+void nx_tft_upload_end(void);
+
+#ifdef __cplusplus
+}
+#endif
