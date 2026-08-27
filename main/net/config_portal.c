@@ -215,13 +215,23 @@ esp_err_t config_portal_start(void)
         ESP_LOGE(TAG, "httpd_start: %s", esp_err_to_name(err));
         return err;
     }
-    /* /save (POST) déclaré avant le catch-all GET. */
     httpd_uri_t save = { .uri = "/save", .method = HTTP_POST, .handler = post_save };
-    httpd_uri_t root = { .uri = "/*", .method = HTTP_GET, .handler = get_root };
     httpd_register_uri_handler(s_server, &save);
-    httpd_register_uri_handler(s_server, &root);
+    /* Le catch-all GET wildcard n'est PAS enregistré ici : avec le matcher
+     * wildcard, il capterait toute requête GET enregistrée après lui (dont
+     * /status côté dev_portal). Voir config_portal_register_fallback(). */
     ESP_LOGI(TAG, "Portail de configuration prêt (http://<ip>/)");
     return ESP_OK;
 }
 
 httpd_handle_t config_portal_handle(void) { return s_server; }
+
+esp_err_t config_portal_register_fallback(void)
+{
+    if (!s_server) return ESP_ERR_INVALID_STATE;
+    /* Enregistré en dernier, après toutes les routes spécifiques (dev_portal
+     * incluse) : avec le matcher wildcard, l'ordre d'enregistrement fait office
+     * de priorité, et ce catch-all doit perdre face à un chemin exact. */
+    httpd_uri_t root = { .uri = "/*", .method = HTTP_GET, .handler = get_root };
+    return httpd_register_uri_handler(s_server, &root);
+}

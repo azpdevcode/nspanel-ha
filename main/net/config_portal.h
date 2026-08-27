@@ -26,6 +26,16 @@ esp_err_t config_portal_start(void);
  *  (voir net/dev_portal.h). NULL si config_portal_start() n'a pas été appelé. */
 httpd_handle_t config_portal_handle(void);
 
+/**
+ * @brief Enregistre le catch-all GET wildcard (formulaire du portail).
+ *
+ * À appeler en DERNIER, après avoir greffé toutes les routes GET spécifiques
+ * (dev_portal_register() notamment) : avec le matcher wildcard configuré par
+ * config_portal_start(), l'ordre d'enregistrement fait office de priorité, et
+ * le wildcard doit être enregistré après un chemin exact pour ne pas le masquer.
+ */
+esp_err_t config_portal_register_fallback(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -112,6 +112,8 @@ void app_main(void)
 
     TRY_INIT(config_portal_start(), "config_portal_start");
     TRY_INIT(dev_portal_register(), "dev_portal_register");
+    /* En dernier : voir config_portal_register_fallback() pour pourquoi l'ordre compte. */
+    TRY_INIT(config_portal_register_fallback(), "config_portal_register_fallback");
 
     app_diag_start();
     app_diag_log_mem("init done");

@@ -5,6 +5,8 @@
  *                  panneau (alternative au bouton physique au boot).
  * POST /tft     -> déclenche un TFT-OTA HTTP (voir ota/tft_ota.h), corps
  *                  form-urlencoded "url=...".
+ * GET  /status  -> état JSON du panneau (version, WiFi, config HA, sondage
+ *                  écran : vSpec présente/révision, pages détectées).
  *
  * Séparé de config_portal.c pour garder ce dernier proche de sa version
  * d'origine (compte HA uniquement) ; ce fichier est spécifique au fork.

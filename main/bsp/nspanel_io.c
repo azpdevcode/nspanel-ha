@@ -201,6 +201,7 @@ static void ntc_timer_cb(void *arg)
 
 float nspanel_ntc_last_c(void) { return s_ntc_last_c; }
 bool  nspanel_io_boot_bridge_requested(void) { return s_boot_bridge; }
+bool  nspanel_io_screen_powered(void) { return gpio_get_level(GPIO_SCREEN_PWR) == 0; }
 
 /* ---- Init ---- */
 

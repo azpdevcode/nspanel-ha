@@ -2,15 +2,105 @@
 #include "config_portal.h"
 #include "nextion.h"
 #include "tft_ota.h"
+#include "wifi.h"
+#include "app_config.h"
+#include "nspanel_io.h"
 
 #include <string.h>
 #include <stdlib.h>
 #include "esp_log.h"
 #include "esp_http_server.h"
+#include "esp_app_desc.h"
+#include "esp_system.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "cJSON.h"
 
 static const char *TAG = "dev_portal";
+
+/* ---- Décodage application/x-www-form-urlencoded ----
+ * httpd_query_key_value() extrait la valeur brute SANS décoder le
+ * percent-encoding (ex. curl --data-urlencode envoie "http%3A%2F%2F..."). */
+
+static int hex_val(char c)
+{
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+static void url_decode(const char *in, char *out, size_t cap)
+{
+    size_t o = 0;
+    for (size_t i = 0; in[i] && o + 1 < cap; i++) {
+        char c = in[i];
+        if (c == '+') {
+            out[o++] = ' ';
+        } else if (c == '%' && hex_val(in[i + 1]) >= 0 && hex_val(in[i + 2]) >= 0) {
+            out[o++] = (char)(hex_val(in[i + 1]) * 16 + hex_val(in[i + 2]));
+            i += 2;
+        } else {
+            out[o++] = c;
+        }
+    }
+    out[o] = '\0';
+}
+
+static esp_err_t get_status(httpd_req_t *req)
+{
+    cJSON *root = cJSON_CreateObject();
+
+    const esp_app_desc_t *app = esp_app_get_description();
+    cJSON_AddStringToObject(root, "fw_version", app->version);
+    cJSON_AddStringToObject(root, "idf_version", app->idf_ver);
+    cJSON_AddNumberToObject(root, "uptime_s", (double)(esp_timer_get_time() / 1000000));
+    cJSON_AddNumberToObject(root, "heap_free", (double)esp_get_free_heap_size());
+
+    cJSON *wifi = cJSON_AddObjectToObject(root, "wifi");
+    bool connected = wifi_is_connected();
+    cJSON_AddBoolToObject(wifi, "connected", connected);
+    cJSON_AddBoolToObject(wifi, "configured", app_config_wifi_set());
+    char ip[16] = "";
+    if (connected && wifi_get_ip(ip, sizeof(ip))) cJSON_AddStringToObject(wifi, "ip", ip);
+    else cJSON_AddNullToObject(wifi, "ip");
+
+    cJSON_AddBoolToObject(root, "ha_configured", app_config_ha_set());
+
+    cJSON *screen = cJSON_AddObjectToObject(root, "screen");
+    cJSON_AddBoolToObject(screen, "gpio4_powered", nspanel_io_screen_powered());
+    cJSON_AddNumberToObject(screen, "baud", (double)nextion_current_baud());
+    cJSON_AddBoolToObject(screen, "vspec_present", nextion_spec_present());
+    cJSON_AddNumberToObject(screen, "vspec_rev", (double)nextion_spec_revision());
+    int present = 0, total = 0;
+    nextion_objects_summary(&present, &total);
+    cJSON_AddNumberToObject(screen, "objects_present", present);
+    cJSON_AddNumberToObject(screen, "objects_total", total);
+
+    cJSON *pages = cJSON_AddObjectToObject(screen, "pages");
+#define NX_PAGE(id, name) cJSON_AddBoolToObject(pages, name, nx_page_present(id));
+#include "nx_pages.def"
+#undef NX_PAGE
+
+    static const char *const ota_state_name[] = {
+        [TFT_OTA_IDLE] = "idle", [TFT_OTA_RUNNING] = "running",
+        [TFT_OTA_OK] = "ok", [TFT_OTA_FAILED] = "failed",
+    };
+    cJSON *ota = cJSON_AddObjectToObject(root, "tft_ota");
+    cJSON_AddStringToObject(ota, "state", ota_state_name[tft_ota_get_state()]);
+    cJSON_AddStringToObject(ota, "status", tft_ota_get_status());
+    cJSON_AddStringToObject(ota, "nx_last_step", nextion_last_step());
+
+    char *out = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (!out) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "json");
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, out);
+    free(out);
+    return ESP_OK;
+}
 
 static void bridge_task(void *arg)
 {
@@ -39,6 +129,16 @@ static void tft_ota_task(void *arg)
 
 static esp_err_t post_tft(httpd_req_t *req)
 {
+    /* Un seul transfert à la fois : nx_tft_upload_*() partage l'UART écran sans
+     * verrou, et deux tâches concurrentes s'entrelaceraient dessus (upload
+     * corrompu côté écran, fuite de tâches/mémoire si on ne les attend jamais). */
+    if (tft_ota_get_state() == TFT_OTA_RUNNING) {
+        httpd_resp_set_status(req, "409 Conflict");
+        httpd_resp_set_type(req, "text/plain");
+        httpd_resp_sendstr(req, "Un transfert TFT est déjà en cours — voir /status.");
+        return ESP_OK;
+    }
+
     char raw[256];
     int total = req->content_len;
     if (total <= 0 || total >= (int)sizeof(raw))
@@ -55,12 +155,98 @@ static esp_err_t post_tft(httpd_req_t *req)
     if (httpd_query_key_value(raw, "url", url_enc, sizeof(url_enc)) != ESP_OK)
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "url manquante");
 
-    char *url = strdup(url_enc);
+    char url_dec[256];
+    url_decode(url_enc, url_dec, sizeof(url_dec));
+
+    char *url = strdup(url_dec);
     if (!url) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "mem");
 
     httpd_resp_set_type(req, "text/plain");
     httpd_resp_sendstr(req, "Transfert TFT démarré — voir les logs série.");
-    xTaskCreate(tft_ota_task, "tft_ota", 4096, url, 5, NULL);
+    /* 8 Ko : le tampon de transfert de tft_ota_run() (4 Ko, cf. CHUNK_SIZE) est
+     * une variable locale sur CETTE pile, plus les frames internes
+     * d'esp_http_client (TLS compilé même pour du HTTP simple). 4 Ko seul a
+     * déjà causé un débordement de pile (reset en pleine requête). */
+    xTaskCreate(tft_ota_task, "tft_ota", 8192, url, 5, NULL);
+    return ESP_OK;
+}
+
+/* POST /nx : REPL série vers l'écran, via HTTP. Corps form-urlencoded :
+ *   cmd=<commande Nextion>   (vide = écoute seule)
+ *   baud=<débit>             (optionnel : force ce débit pour l'échange)
+ *   window=<ms>              (optionnel : fenêtre d'écoute, défaut 400, max 3000)
+ * Réponse JSON : la commande envoyée et les octets reçus en hexadécimal. */
+static esp_err_t post_nx(httpd_req_t *req)
+{
+    char raw[320];
+    int total = req->content_len;
+    if (total <= 0 || total >= (int)sizeof(raw))
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "corps invalide");
+    int received = 0;
+    while (received < total) {
+        int r = httpd_req_recv(req, raw + received, total - received);
+        if (r <= 0) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "lecture");
+        received += r;
+    }
+    raw[total] = '\0';
+
+    char enc[256], cmd[256] = "";
+    if (httpd_query_key_value(raw, "cmd", enc, sizeof(enc)) == ESP_OK)
+        url_decode(enc, cmd, sizeof(cmd));
+
+    char tmp[16];
+    uint32_t baud = 0, window = 400;
+    if (httpd_query_key_value(raw, "baud", tmp, sizeof(tmp)) == ESP_OK)
+        baud = (uint32_t)atoi(tmp);
+    if (httpd_query_key_value(raw, "window", tmp, sizeof(tmp)) == ESP_OK)
+        window = (uint32_t)atoi(tmp);
+    if (window > 3000) window = 3000;
+
+    uint8_t rx[256];
+    size_t n = nx_raw_exchange(cmd, baud, rx, sizeof(rx), window);
+
+    char hex[3 * sizeof(rx) + 1];
+    size_t o = 0;
+    for (size_t i = 0; i < n; i++)
+        o += snprintf(hex + o, sizeof(hex) - o, "%02X ", rx[i]);
+    if (o > 0) hex[o - 1] = '\0'; else hex[0] = '\0';
+
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "cmd", cmd);
+    cJSON_AddNumberToObject(root, "baud", (double)baud);
+    cJSON_AddNumberToObject(root, "window_ms", (double)window);
+    cJSON_AddNumberToObject(root, "rx_len", (double)n);
+    cJSON_AddStringToObject(root, "rx_hex", hex);
+    char *out = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (!out) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "json");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, out);
+    free(out);
+    return ESP_OK;
+}
+
+/* POST /scan : rebalaye les débits jusqu'à ce que l'écran réponde, puis re-sonde.
+ * À utiliser après un upload de .tft qui a changé le débit de l'écran. */
+static esp_err_t post_scan(httpd_req_t *req)
+{
+    uint32_t baud = nextion_scan_baud();
+    if (baud) nextion_probe();
+
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddNumberToObject(root, "baud", (double)baud);
+    cJSON_AddBoolToObject(root, "vspec_present", nextion_spec_present());
+    cJSON_AddNumberToObject(root, "vspec_rev", (double)nextion_spec_revision());
+    int present = 0, total = 0;
+    nextion_objects_summary(&present, &total);
+    cJSON_AddNumberToObject(root, "objects_present", present);
+    cJSON_AddNumberToObject(root, "objects_total", total);
+    char *out = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (!out) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "json");
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, out);
+    free(out);
     return ESP_OK;
 }
 
@@ -73,8 +259,14 @@ esp_err_t dev_portal_register(void)
     }
     httpd_uri_t bridge = { .uri = "/bridge", .method = HTTP_POST, .handler = post_bridge };
     httpd_uri_t tft     = { .uri = "/tft",    .method = HTTP_POST, .handler = post_tft };
+    httpd_uri_t status  = { .uri = "/status", .method = HTTP_GET,  .handler = get_status };
+    httpd_uri_t nx      = { .uri = "/nx",     .method = HTTP_POST, .handler = post_nx };
+    httpd_uri_t scan    = { .uri = "/scan",   .method = HTTP_POST, .handler = post_scan };
     httpd_register_uri_handler(h, &bridge);
     httpd_register_uri_handler(h, &tft);
-    ESP_LOGI(TAG, "routes de développement prêtes (/bridge, /tft)");
+    httpd_register_uri_handler(h, &status);
+    httpd_register_uri_handler(h, &nx);
+    httpd_register_uri_handler(h, &scan);
+    ESP_LOGI(TAG, "routes de développement prêtes (/bridge, /tft, /status, /nx, /scan)");
     return ESP_OK;
 }
