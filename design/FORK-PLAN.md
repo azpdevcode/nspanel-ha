@@ -112,10 +112,29 @@ Une tâche RX décode les codes retour (`0x65` tactile, `0x66` page courante, `0
 `0x1A`/`0x1B` erreurs — à logger, c'est le diagnostic principal d'une faute de frappe dans
 un nom d'objet) et poste les `nx_touch_t` dans la file de `ui_worker`.
 
-Négociation de débit : ouvrir à 115200, envoyer `baud=921600` (volatile, à refaire à chaque
-boot — ne **pas** utiliser `bauds`, qui grave le réglage et rend l'écran muet si le firmware
-ESP32 crashe avant de rebasculer), rouvrir l'UART à 921600, vérifier par un `get sleep`.
-Repli silencieux sur 115200 si pas de réponse.
+**Débit : on ne négocie rien, on découvre.** (Corrigé en phase 1 — la version initiale de ce
+plan prescrivait une montée à `baud=921600` ; c'était une fausse bonne idée, mesurée comme
+nuisible sur le matériel réel.)
+
+- Envoyer `baud=921600` à un écran encore en **reparse actif** (firmware Sonoff d'origine)
+  suffit à rendre son analyseur muet pour **toute la session** : plus aucune commande n'est
+  interprétée ensuite, y compris la séquence de sortie du reparse. Le panneau paraît alors
+  débranché alors que l'écran fonctionne parfaitement. La config ESPHome de référence
+  (`Blackymas/NSPanel_HA_Blueprint`, `esphome/nspanel_esphome_hw_display.yaml`) ne négocie
+  jamais le débit — elle reste à celui du `.tft`.
+- Un `.tft` **embarque son propre réglage de débit**, qui change donc à chaque téléversement
+  (un projet Nextion neuf est souvent à 9600). Supposer 115200 en dur condamne le pilote à
+  devenir muet dès qu'on téléverse un `.tft` réglé autrement.
+
+D'où `nextion_scan_baud()` : balayage des débits standard (115200 et 9600 en tête) jusqu'à ce
+que l'écran réponde à `get sleep`, appelé au boot et après chaque upload TFT.
+
+**Piège de syntaxe, vérifié :** `sleep` est une variable **système**, sa syntaxe est
+`get sleep` — **sans** suffixe `.val`. `get sleep.val` est invalide et reste sans réponse à
+tous les débits ; la détection échoue alors silencieusement alors que l'écran répond
+`71 00 00 00 00 FF FF FF` à la requête bien formée. Seuls les composants (`vSpec`, `tStat`…)
+prennent la forme `get <nom>.<attribut>`. C'est `get_sync(name, NULL, …)` vs
+`get_sync(name, "val", …)` dans `bsp/nextion.c`.
 
 ### Modèle de concurrence — nettement plus simple qu'en LVGL
 
@@ -197,9 +216,37 @@ court, donc les deux voies d'upload arrivent en **phase 1**, pas à la fin :
   démarrage, ou `POST /bridge` sur le portail, met l'ESP32 en pont transparent
   USB-UART0 ↔ écran-UART2. Nextion Editor téléverse alors le `.tft` directement depuis le PC,
   comme sur un écran nu. C'est exactement l'usage du « Serial Bridge » GPIO16/17 de Tasmota.
-- **TFT-OTA HTTP** : `ota/tft_ota.c` télécharge le `.tft` depuis `/local/` de HA et le
-  streame par blocs de 4096 avec accusé (protocole d'upload Nextion v1.2). Utile une fois
-  le panneau au mur.
+- **TFT-OTA HTTP** : `ota/tft_ota.c` télécharge le `.tft` depuis n'importe quelle URL HTTP
+  (`/local/` de HA, ou un simple `python3 -m http.server` sur le PC de dev) et le streame par
+  blocs de 4096 avec accusé (protocole d'upload Nextion v1.2). Utile une fois le panneau au
+  mur — et en pratique la voie principale, le pont série imposant d'avoir l'adaptateur
+  USB-TTL branché en même temps que l'alimentation, ce que le montage ne permet pas toujours.
+
+### 5. Diagnostic sans moniteur série
+
+Le port de programmation (UART0, GPIO1/3) n'est pas toujours accessible en même temps que
+l'alimentation du panneau. Tout l'état nécessaire est donc exposé en HTTP par
+`net/dev_portal.c` — c'est ce qui a permis de trouver les trois bugs de la phase 1 :
+
+| Route | Usage |
+|---|---|
+| `GET /status` | JSON complet : version, WiFi, débit écran détecté, `vSpec` + révision, présence par page, état du TFT-OTA avec progression et dernier point de contrôle du pilote |
+| `POST /nx` | REPL série vers l'écran : `cmd=<commande>` (vide = écoute seule), `baud=`, `window=` ; renvoie les octets reçus en hexadécimal |
+| `POST /scan` | Rebalaye les débits puis re-sonde — après un upload qui a changé le débit |
+| `POST /tft` | Lance un TFT-OTA : `url=<url du .tft>` (un seul transfert à la fois, 409 sinon) |
+| `POST /bridge` | Bascule en pont série transparent (noreturn, redémarrage requis) |
+
+Deux réflexes utiles avec `/nx` : une écoute seule (`cmd=`) sur 3 s montre si l'écran émet
+spontanément — un firmware Sonoff en reparse actif « bavarde » son état en clé/valeur
+(`92 "current_page" 00 "boot" 00 FF FF FF`…), un `.tft` neuf reste silencieux tant qu'on ne
+l'interroge pas. Et `cmd=get sleep` doit répondre `71 00 00 00 00 FF FF FF` : c'est le test
+canonique « on se comprend au débit courant ».
+
+**Attention à la concurrence sur l'UART écran.** `vTaskSuspend()` n'annule pas proprement une
+tâche bloquée dans `uart_read_bytes()` : elle reste inscrite comme lecteur du ring buffer, et
+un `uart_flush_input()` appelé depuis une autre tâche s'y bloque **indéfiniment** (constaté :
+TFT-OTA figé pour toujours sur `flush_input`). D'où la pause **coopérative** de `rx_task`
+(drapeau `s_rx_paused` + lecture bornée à 100 ms), et non une suspension de tâche.
 
 ---
 
@@ -347,9 +394,11 @@ Par phase :
 idf.py -p /dev/ttyUSB0 build flash monitor
 idf.py size                       # marge sur ota_0 = 1792K
 ```
-- **Phase 1** : le moniteur doit montrer `nextion: ready (0x88)`, `wifi: got ip`, et l'écran
-  afficher l'IP. Puis téléverser un `.HMI` réduit à `boot` + `vSpec` et vérifier le
-  rechargement, par le pont série puis par TFT-OTA.
+- **Phase 1** ✅ *(atteinte)* : `curl http://<ip>/status` doit montrer `wifi.connected`,
+  `screen.baud` non nul, et après téléversement d'un `.HMI` réduit à `boot` + `vSpec` :
+  `screen.vspec_present: true` avec la bonne `vspec_rev` et `pages.boot: true`.
+  Le moniteur série n'est pas requis (et souvent pas disponible : sur ce montage
+  l'adaptateur USB-TTL ne peut pas être branché en même temps que l'alimentation).
 - **Tolérance (à rejouer à chaque phase)** : flasher le firmware complet avec un `.tft` qui
   n'a que `boot`, puis un qui n'a que `boot` + `home`. Attendu à chaque fois : boot propre,
   `nx: N/M objets absents` dans les logs, **zéro `0x1A` après le sondage**, aucun reboot.
@@ -374,9 +423,23 @@ changement de page (attendu > 100 Ko au repos).
   plus l'HMI), et le pont série raccourcit la boucle, mais le temps de souris demeure. La
   spec doit donc rester la source de vérité : un objet ajouté dans l'Editor sans entrée dans
   `nx_objects.def` n'existe pas pour le firmware, et l'inverse est simplement inerte.
-- **Écran Sonoff ≠ Nextion standard.** Le NX4832F035_011C est une variante ITead. Les projets
-  communautaires y flashent des `.tft` Nextion standards sans problème, mais la phase 1
-  doit le confirmer avant d'investir dans le design.
+- ~~**Écran Sonoff ≠ Nextion standard.**~~ **Levé en phase 1** : le NX4832F035_011C accepte
+  bien un `.tft` Nextion standard, monté dans l'Editor et téléversé par TFT-OTA, et répond
+  au jeu de commandes standard une fois sorti du reparse mode. Le vrai obstacle n'était pas
+  la variante ITead mais nos propres bugs (cf. ci-dessous).
+- **Trois pièges du pilote série, tous rencontrés et corrigés en phase 1.** À ne pas
+  réintroduire — chacun rend l'écran *totalement* muet, symptôme identique et trompeur
+  (on croit à un problème de câblage alors que l'écran fonctionne) :
+  1. `baud=921600` envoyé à un écran en reparse actif le fige pour toute la session.
+     → ne plus négocier le débit, le découvrir (`nextion_scan_baud()`).
+  2. `get sleep.val` au lieu de `get sleep` sur une variable **système** : invalide, donc
+     sans réponse à tous les débits, donc détection toujours en échec.
+  3. `whmi-wri` envoyé au débit d'upload au lieu du débit courant de l'écran : ne marchait
+     que tant que les deux valaient 115200.
+  Corollaire de méthode : **un écran muet n'est pas une preuve de panne matérielle.**
+  Vérifier d'abord avec `POST /nx` en écoute seule, et se rappeler que le port de
+  programmation (UART0) et le port écran (UART2) sont deux liaisons indépendantes —
+  un flash qui réussit ne dit rien de l'état de la seconde.
 - **28 Ko de BSS pour `s_rooms`.** Réduire `MAX_ROOMS` à 8 et `MAX_RLIGHTS` à 8 dès la
   phase 2, avant que le reste ne se cale dessus.
 - **Pas de retour en arrière sur le firmware d'origine** sans la sauvegarde flash ci-dessus.

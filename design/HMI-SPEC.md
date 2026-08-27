@@ -6,13 +6,24 @@ modification ici doit se refléter dans ces deux fichiers (et réciproquement).
 
 ## Général
 
-- Écran : Nextion Discovery NX4832F035, 320×480 **portrait**, résistif.
-- Reparse mode (« Active Reparse ») **désactivé** avant export du `.tft`
-  (le firmware Sonoff d'origine l'active ; cause n°1 des échecs d'upload TFT
-  signalés en communauté).
+- Écran : Nextion Discovery NX4832F035, résistif.
+- **Orientation : à trancher.** Cette spec a été écrite pour 320×480 *portrait* ;
+  le projet Editor actuel est en 480×320 *paysage* (résolution native de la
+  dalle). Les deux fonctionnent — mais toutes les positions des pages suivantes
+  en dépendent, donc à figer avant de dessiner `home`.
+- **Reparse mode : rien à faire dans l'Editor.** Ce n'est pas une option de
+  compilation mais un état d'exécution (`recmod`) activé par le programme du
+  `.tft` chargé — celui d'origine Sonoff le réaffirme en continu. C'est le
+  firmware ESP32 qui l'en sort (`exit_reparse_mode()` dans `bsp/nextion.c`),
+  au boot et avant chaque upload. Ne pas chercher de case à cocher.
 - Tout composant écrit par le firmware doit avoir `vscope=global`, sinon
   impossible de le pré-remplir avant d'y naviguer.
 - Polices `.zi` (chasse fixe) : `f0` 16 px, `f1` 24 px, `f2` 48 px.
+  **Restreindre le jeu de caractères à la génération** (ASCII, ou Latin-1 si on
+  veut les accents) : avec un jeu large, une seule police 16 px a produit
+  2,03 Mo sur un `.tft` de 2,43 Mo — soit 84 % du fichier, et plusieurs minutes
+  par upload à 115200 bauds au lieu de quelques secondes. Le panneau Output de
+  l'Editor donne `Total size of font:` — c'est le chiffre à surveiller.
 - Icônes : pas de police d'icônes — glyphes Material exportés en PNG, ajoutés
   en ressources Picture, affichés par `pic`/`picq`.
 - Palette RGB565 dérivée de `ui_common.h` du panneau P4 :
@@ -26,6 +37,23 @@ Variable globale (page `boot`), attribut `.val` = révision entière de cette
 spec, à **incrémenter à chaque upload**. Le firmware la lit au boot pour
 décider s'il doit re-sonder les objets (voir `bsp/nextion.c:nextion_probe`).
 Sans elle, le firmware suppose un écran d'origine et n'essaie plus rien.
+
+## Cycle d'itération (vérifié en phase 1)
+
+Aucun moniteur série n'est nécessaire — tout passe par HTTP (cf. « Diagnostic
+sans moniteur série » dans le plan de fork) :
+
+1. Modifier l'HMI dans l'Editor, **incrémenter `vSpec.val`**, compiler.
+2. Servir le fichier : `python3 -m http.server 8000` dans son dossier.
+   Ne jamais recompiler pendant qu'un transfert est en cours — un `.tft` servi
+   à moitié réécrit donne un « System data ERROR! » à l'écran (état récupérable :
+   il suffit de refaire un upload complet).
+3. `curl -X POST --data-urlencode "url=http://<pc>:8000/nspanel.tft" http://<panneau>/tft`
+4. Suivre `curl http://<panneau>/status` → `tft_ota.status` donne la progression,
+   puis `screen.vspec_rev` et `screen.pages` confirment le sondage.
+
+Compter ~11 Ko/s (115200 bauds) : quelques secondes pour un `.tft` bien dégraissé,
+plusieurs minutes si la police n'a pas été restreinte.
 
 ## Ordre de montage suggéré
 
