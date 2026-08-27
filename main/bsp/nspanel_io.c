@@ -15,7 +15,7 @@
 static const char *TAG = "nspanel_io";
 
 /* --- Broches (E32-MSW-NX, confirmées communauté Tasmota) --- */
-#define GPIO_SCREEN_PWR   4
+#define GPIO_SCREEN_PWR   4    /* actif BAS : 0 = écran alimenté */
 #define GPIO_RELAY1       22
 #define GPIO_RELAY2       19
 #define GPIO_BUTTON1      14   /* relais 1 */
@@ -206,14 +206,20 @@ bool  nspanel_io_boot_bridge_requested(void) { return s_boot_bridge; }
 
 esp_err_t nspanel_io_init(void)
 {
-    /* Alimentation écran EN PREMIER : sans ce GPIO haut, l'écran reste noir
-     * quoi que fasse nextion_init() ensuite. */
+    /* Alimentation écran EN PREMIER : sans elle, l'écran reste noir et muet
+     * quoi que fasse nextion_init() ensuite.
+     *
+     * ATTENTION, la ligne est ACTIVE À L'ÉTAT BAS : niveau 0 = écran alimenté.
+     * (ESPHome la déclare `pin: {number: 4, inverted: true}` +
+     * `restore_mode: ALWAYS_ON`, ce qui revient à piloter le GPIO à 0.)
+     * Piloter ce GPIO à 1 laisse l'écran hors tension — il paraît alors
+     * simplement absent, sans aucun message d'erreur pour le signaler. */
     gpio_config_t pwr = {
         .pin_bit_mask = 1ULL << GPIO_SCREEN_PWR,
         .mode = GPIO_MODE_OUTPUT,
     };
     gpio_config(&pwr);
-    gpio_set_level(GPIO_SCREEN_PWR, 1);
+    gpio_set_level(GPIO_SCREEN_PWR, 0);
 
     /* Relais. */
     gpio_config_t rly = {

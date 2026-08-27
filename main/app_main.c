@@ -116,8 +116,21 @@ void app_main(void)
     app_diag_start();
     app_diag_log_mem("init done");
 
+    /* Battement de cœur console. Ce montage n'a pas de reset automatique : on ne
+     * peut pas provoquer un boot pour vérifier que le firmware tourne, il faut
+     * pouvoir le constater à tout moment sur une écoute de quelques secondes. */
+    int tick = 0;
     for (;;) {
         boot_status_tick();
+        if (++tick % 3 == 0) {   /* ~6 s */
+            char ip[16] = "-";
+            wifi_get_ip(ip, sizeof(ip));
+            ESP_LOGI(TAG, "vivant | wifi=%s ip=%s | ha=%s | ecran=%s",
+                     wifi_is_connected() ? "ok" : (wifi_failed() ? "ko" : "..."),
+                     ip,
+                     app_config_ha_set() ? "configure" : "absent",
+                     nx_page_present(NXP_BOOT) ? "tft ok" : "tft absent");
+        }
         vTaskDelay(pdMS_TO_TICKS(2000));
     }
 }

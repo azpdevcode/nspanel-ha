@@ -369,6 +369,28 @@ bool nextion_get_touch(nx_touch_t *out, uint32_t timeout_ms)
 
 /* ---- Négociation de débit + init ---- */
 
+/* Sortie du « Protocol Reparse Mode ».
+ *
+ * Le firmware Sonoff d'origine laisse l'écran en reparse actif : il n'interprète
+ * alors PAS les commandes Nextion standard (`get`, `page`, `obj.txt=`), mais un
+ * protocole JSON propriétaire. Tant qu'on n'en est pas sorti, l'écran paraît
+ * muet et un diagnostic de câblage serait un faux positif.
+ *
+ * La séquence d'échappement documentée est la chaîne magique ci-dessous, suivie
+ * de deux `recmod=0` (le doublon est recommandé par l'implémentation ESPHome de
+ * référence : le premier est parfois consommé par le parseur en cours de bascule).
+ * Sans effet sur un écran déjà en mode passif — donc sûr à envoyer à chaque boot,
+ * y compris une fois notre propre .tft chargé. */
+static void exit_reparse_mode(void)
+{
+    nx_cmd("DRAKJHSUYDGBNCJHGJKSHBDN");
+    vTaskDelay(pdMS_TO_TICKS(50));
+    nx_cmd("recmod=0");
+    nx_cmd("recmod=0");
+    vTaskDelay(pdMS_TO_TICKS(50));
+    uart_flush_input(NX_UART_NUM);
+}
+
 static bool try_baud(uint32_t baud, uint32_t verify_timeout_ms)
 {
     (void)verify_timeout_ms;
@@ -377,6 +399,9 @@ static bool try_baud(uint32_t baud, uint32_t verify_timeout_ms)
     nx_get_result_t r;
     /* `get sleep` : présent sur tout firmware Nextion, sert juste à vérifier
      * qu'on se comprend au débit courant. */
+    if (get_sync("sleep", "val", &r)) return true;
+    /* Pas de réponse : peut-être un reparse actif plutôt qu'un mauvais débit. */
+    exit_reparse_mode();
     return get_sync("sleep", "val", &r);
 }
 
@@ -398,6 +423,16 @@ esp_err_t nextion_init(void)
     uart_param_config(NX_UART_NUM, &cfg);
     uart_set_pin(NX_UART_NUM, NX_TX_PIN, NX_RX_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
 
+    /* Le STM32 de l'écran met ~500 ms à démarrer après la mise sous tension de
+     * GPIO4 (nspanel_io_init, appelé juste avant). Le sonder trop tôt le fait
+     * passer pour absent. */
+    vTaskDelay(pdMS_TO_TICKS(600));
+
+    /* Écran d'origine = reparse actif : il ignore les commandes standard tant
+     * qu'on n'en est pas sorti. À faire AVANT toute négociation de débit, sinon
+     * `baud=` lui-même est ignoré. Sans effet si déjà en mode passif. */
+    exit_reparse_mode();
+
     /* Négociation : on tente de monter à 921600 ; repli silencieux sur 115200
      * si l'écran ne répond pas (clones/anciens firmwares qui ignorent `baud=`). */
     uart_flush_input(NX_UART_NUM);
@@ -410,9 +445,9 @@ esp_err_t nextion_init(void)
     } else {
         ESP_LOGW(TAG, "pas de réponse à %d bauds, repli sur %d", NX_BAUD_FAST, NX_BAUD_BOOT);
         if (!try_baud(NX_BAUD_BOOT, 300)) {
-            ESP_LOGW(TAG, "aucune réponse de l'écran à 115200 non plus — "
-                          "matériel absent ou câblage incorrect (TX=%d RX=%d)",
-                     NX_TX_PIN, NX_RX_PIN);
+            ESP_LOGW(TAG, "aucune réponse de l'écran (TX=%d RX=%d). Causes possibles, "
+                          "dans l'ordre : reparse mode non quitté, écran encore en "
+                          "démarrage, câblage.", NX_TX_PIN, NX_RX_PIN);
         }
     }
 
