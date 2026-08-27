@@ -54,6 +54,28 @@ static TaskHandle_t  s_rx_task;
 static bool           s_have_spec;
 static int32_t        s_spec_rev = -1;
 
+/* Pause coopérative de rx_task, PAS vTaskSuspend() : rx_task lit l'UART avec un
+ * timeout borné (voir rx_task()) et vérifie ce drapeau entre deux lectures, au
+ * lieu de bloquer indéfiniment dans uart_read_bytes(). Suspendre une tâche en
+ * plein appel bloquant ne l'annule pas proprement côté driver UART — elle reste
+ * inscrite comme lecteur en attente dans le ring buffer, et un uart_flush_input()
+ * ou uart_write_bytes() appelé depuis une autre tâche pendant ce temps peut se
+ * bloquer à son tour (constaté : /status figé indéfiniment sur "flush_input"
+ * pendant un upload TFT-OTA). */
+static volatile bool s_rx_paused;
+
+static void rx_pause(void)
+{
+    if (!s_rx_task) return;
+    s_rx_paused = true;
+    vTaskDelay(pdMS_TO_TICKS(120));   /* laisse rx_task sortir de son read borné */
+}
+
+static void rx_resume(void)
+{
+    s_rx_paused = false;
+}
+
 /* Réveil tactile pendant le sommeil écran (0x87) : événement synthétique posté
  * sur la file tactile pour que ui_worker sorte de veille et rafraîchisse. */
 #define NX_WAKE_PAGE 0xFFu
@@ -135,16 +157,21 @@ typedef struct {
     int32_t num;
 } nx_get_result_t;
 
+/* attr == NULL : variable SYSTÈME (sleep, dim, baud…), dont la syntaxe est
+ * `get <nom>` sans suffixe — `get sleep.val` est invalide et reste sans réponse,
+ * quel que soit le débit. */
 static bool get_sync(const char *name, const char *attr, nx_get_result_t *res)
 {
     memset(res, 0, sizeof(*res));
     uart_flush_input(NX_UART_NUM);
-    nx_cmd("get %s.%s", name, attr);
+    if (attr) nx_cmd("get %s.%s", name, attr);
+    else      nx_cmd("get %s", name);
 
     uint8_t frame[16];
     size_t flen = 0;
     if (!read_frame(frame, sizeof(frame), &flen, 300)) {
-        ESP_LOGD(TAG, "get %s.%s: pas de réponse (timeout)", name, attr);
+        ESP_LOGD(TAG, "get %s%s%s: pas de réponse (timeout)",
+                 name, attr ? "." : "", attr ? attr : "");
         return false;
     }
     if (flen == 0) return false;
@@ -160,10 +187,12 @@ static bool get_sync(const char *name, const char *attr, nx_get_result_t *res)
         res->ok = true;
         return true;
     case 0x1A:
-        ESP_LOGD(TAG, "get %s.%s: composant/attribut inconnu (0x1A)", name, attr);
+        ESP_LOGD(TAG, "get %s%s%s: composant/attribut inconnu (0x1A)",
+                 name, attr ? "." : "", attr ? attr : "");
         return false;
     default:
-        ESP_LOGD(TAG, "get %s.%s: code retour inattendu 0x%02X", name, attr, frame[0]);
+        ESP_LOGD(TAG, "get %s%s%s: code retour inattendu 0x%02X",
+                 name, attr ? "." : "", attr ? attr : "", frame[0]);
         return false;
     }
 }
@@ -222,7 +251,7 @@ void nextion_force_reprobe(void)
 
 void nextion_probe(void)
 {
-    if (s_rx_task) vTaskSuspend(s_rx_task);
+    rx_pause();
 
     for (int i = 0; i < NXP_COUNT; i++) s_page_anchor[i] = NX_OBJ_COUNT;
     memset(s_present, 0, sizeof(s_present));
@@ -234,7 +263,7 @@ void nextion_probe(void)
     if (!s_have_spec) {
         ESP_LOGW(TAG, "vSpec absente — écran d'origine ou HMI non conforme, "
                        "tous les objets restent marqués absents");
-        if (s_rx_task) vTaskResume(s_rx_task);
+        rx_resume();
         return;
     }
 
@@ -258,7 +287,7 @@ void nextion_probe(void)
         if (s_page_anchor[p] == NX_OBJ_COUNT) s_page_anchor[p] = (nx_obj_t)i;
     }
 
-    if (s_rx_task) vTaskResume(s_rx_task);
+    rx_resume();
 }
 
 bool nx_present(nx_obj_t o)
@@ -273,6 +302,17 @@ bool nx_page_present(nx_page_t p)
     nx_obj_t a = s_page_anchor[p];
     if (a == NX_OBJ_COUNT) return false;
     return s_present[a];
+}
+
+bool nextion_spec_present(void) { return s_have_spec; }
+int32_t nextion_spec_revision(void) { return s_spec_rev; }
+
+void nextion_objects_summary(int *present, int *total)
+{
+    int found = 0;
+    for (int i = 0; i < NX_OBJ_COUNT; i++) if (s_present[i]) found++;
+    if (present) *present = found;
+    if (total) *total = NX_OBJ_COUNT;
 }
 
 /* ---- Écritures tolérantes ---- */
@@ -326,13 +366,17 @@ void nx_dim(uint8_t pct)
 
 /* ---- Tâche RX : événements tactiles + veille ---- */
 
+#define NX_RX_POLL_MS  100   /* borne le blocage dans uart_read_bytes() pour que
+                                * la pause coopérative (s_rx_paused) reste réactive */
+
 static void rx_task(void *arg)
 {
     (void)arg;
     uint8_t frame[16];
     size_t flen;
     for (;;) {
-        if (!read_frame(frame, sizeof(frame), &flen, portMAX_DELAY)) continue;
+        if (s_rx_paused) { vTaskDelay(pdMS_TO_TICKS(20)); continue; }
+        if (!read_frame(frame, sizeof(frame), &flen, NX_RX_POLL_MS)) continue;
         if (flen == 0) continue;
         switch (frame[0]) {
         case 0x65: /* touch : 0x65 page cid event */
@@ -397,13 +441,49 @@ static bool try_baud(uint32_t baud, uint32_t verify_timeout_ms)
     uart_set_baudrate(NX_UART_NUM, baud);
     uart_flush_input(NX_UART_NUM);
     nx_get_result_t r;
-    /* `get sleep` : présent sur tout firmware Nextion, sert juste à vérifier
-     * qu'on se comprend au débit courant. */
-    if (get_sync("sleep", "val", &r)) return true;
+    /* `get sleep` : variable SYSTÈME, donc SANS suffixe `.val` (attr = NULL).
+     * `get sleep.val` est invalide et ne répond jamais — c'était le bug qui
+     * faisait échouer la détection de débit à tous les débits, alors que la même
+     * requête bien formée répondait `71 00 00 00 00 FF FF FF`. */
+    if (get_sync("sleep", NULL, &r)) return true;
     /* Pas de réponse : peut-être un reparse actif plutôt qu'un mauvais débit. */
     exit_reparse_mode();
-    return get_sync("sleep", "val", &r);
+    return get_sync("sleep", NULL, &r);
 }
+
+/* Débit auquel l'écran a répondu pour la dernière fois. Un .tft embarque SON
+ * propre réglage de débit (un projet Nextion neuf est souvent à 9600), et il
+ * change donc à chaque upload : le supposer en dur condamne le pilote à devenir
+ * muet dès qu'on téléverse un .tft qui n'est pas à 115200. */
+static uint32_t s_baud_current;
+
+/* 115200 en tête (valeur du firmware Sonoff d'origine ET de la config ESPHome
+ * de référence), puis 9600 (défaut d'un projet Nextion neuf), puis le reste. */
+static const uint32_t s_baud_candidates[] = {
+    115200, 9600, 921600, 57600, 38400, 19200, 230400, 250000, 256000, 512000, 4800, 2400,
+};
+
+uint32_t nextion_scan_baud(void)
+{
+    rx_pause();
+    for (size_t i = 0; i < sizeof(s_baud_candidates) / sizeof(s_baud_candidates[0]); i++) {
+        if (try_baud(s_baud_candidates[i], 300)) {
+            s_baud_current = s_baud_candidates[i];
+            ESP_LOGI(TAG, "écran détecté à %u bauds", (unsigned)s_baud_current);
+            rx_resume();
+            return s_baud_current;
+        }
+    }
+    /* Aucun candidat : ne pas laisser l'UART sur un débit exotique. */
+    uart_set_baudrate(NX_UART_NUM, NX_BAUD_BOOT);
+    s_baud_current = 0;
+    ESP_LOGW(TAG, "aucun débit ne répond (%d candidats testés)",
+             (int)(sizeof(s_baud_candidates) / sizeof(s_baud_candidates[0])));
+    rx_resume();
+    return 0;
+}
+
+uint32_t nextion_current_baud(void) { return s_baud_current; }
 
 esp_err_t nextion_init(void)
 {
@@ -433,22 +513,15 @@ esp_err_t nextion_init(void)
      * `baud=` lui-même est ignoré. Sans effet si déjà en mode passif. */
     exit_reparse_mode();
 
-    /* Négociation : on tente de monter à 921600 ; repli silencieux sur 115200
-     * si l'écran ne répond pas (clones/anciens firmwares qui ignorent `baud=`). */
-    uart_flush_input(NX_UART_NUM);
-    nx_cmd("bkcmd=2");         /* défaut : ne renvoie que les échecs — silencieux au succès */
-    nx_cmd("baud=%d", NX_BAUD_FAST);  /* volatile : non gravé, sûr si l'ESP32 replante */
-    vTaskDelay(pdMS_TO_TICKS(50));
-
-    if (try_baud(NX_BAUD_FAST, 300)) {
-        ESP_LOGI(TAG, "écran Nextion à %d bauds", NX_BAUD_FAST);
-    } else {
-        ESP_LOGW(TAG, "pas de réponse à %d bauds, repli sur %d", NX_BAUD_FAST, NX_BAUD_BOOT);
-        if (!try_baud(NX_BAUD_BOOT, 300)) {
-            ESP_LOGW(TAG, "aucune réponse de l'écran (TX=%d RX=%d). Causes possibles, "
-                          "dans l'ordre : reparse mode non quitté, écran encore en "
-                          "démarrage, câblage.", NX_TX_PIN, NX_RX_PIN);
-        }
+    /* On NE négocie PAS `baud=` : la config ESPHome de référence
+     * (Blackymas/NSPanel_HA_Blueprint) qui fonctionne sur ce matériel reste au
+     * débit du .tft, et un `baud=921600` non reconnu suffit à rendre l'analyseur
+     * de l'écran d'origine muet pour toute la session (constaté).
+     * On DÉCOUVRE le débit à la place — il change à chaque upload de .tft. */
+    if (!nextion_scan_baud()) {
+        ESP_LOGW(TAG, "aucune réponse de l'écran (TX=%d RX=%d). Causes possibles, "
+                      "dans l'ordre : reparse mode non quitté, écran encore en "
+                      "démarrage, câblage.", NX_TX_PIN, NX_RX_PIN);
     }
 
     s_touch_q = xQueueCreate(8, sizeof(nx_touch_t));
@@ -467,7 +540,7 @@ esp_err_t nextion_init(void)
 
 void nextion_bridge_run(void)
 {
-    if (s_rx_task) vTaskSuspend(s_rx_task);
+    rx_pause();
     ESP_LOGW(TAG, "pont série actif : USB <-> écran, redémarrage requis pour en sortir");
     uart_set_baudrate(NX_UART_NUM, NX_BAUD_BOOT);
 
@@ -499,31 +572,119 @@ static bool wait_ack_byte(uint32_t timeout_ms)
     return false;
 }
 
+/* Point de contrôle grossier, lisible via /status sans moniteur série — utile
+ * pour localiser un blocage dans une séquence qui n'a normalement aucune
+ * raison de dépasser quelques secondes. */
+static char s_last_step[48] = "-";
+static void set_step(const char *s) { strncpy(s_last_step, s, sizeof(s_last_step) - 1); }
+const char *nextion_last_step(void) { return s_last_step; }
+
 bool nx_tft_upload_begin(uint32_t size_bytes, uint32_t baud, uint32_t timeout_ms)
 {
-    if (s_rx_task) vTaskSuspend(s_rx_task);
-    uart_set_baudrate(NX_UART_NUM, baud);
-    uart_flush_input(NX_UART_NUM);
-    nx_cmd("whmi-wri=%u,%u,0", (unsigned)size_bytes, (unsigned)baud);
-    bool ok = wait_ack_byte(timeout_ms);
-    if (!ok) ESP_LOGE(TAG, "upload TFT: pas d'accusé initial (whmi-wri)");
+    set_step("upload_begin: suspend rx_task");
+    rx_pause();
+
+    /* Le débit courant de l'écran est celui de son .tft, pas forcément le nôtre :
+     * le (re)découvrir avant tout, sinon whmi-wri part dans le vide. */
+    set_step("upload_begin: scan baud");
+    uint32_t detected = s_baud_current ? s_baud_current : nextion_scan_baud();
+    rx_pause();   /* nextion_scan_baud() a pu relâcher la pause */
+
+    /* Un écran affichant « System data ERROR! » n'a PLUS de .tft valide : il ne
+     * répond donc à aucun `get`, et le balayage échoue. C'est précisément l'état
+     * dont un upload doit pouvoir le sortir — on ne renonce jamais ici, on tente
+     * whmi-wri sur chaque débit candidat jusqu'à obtenir l'accusé. */
+    const uint32_t *cands = s_baud_candidates;
+    size_t ncands = sizeof(s_baud_candidates) / sizeof(s_baud_candidates[0]);
+    uint32_t only[1];
+    if (detected) { only[0] = detected; cands = only; ncands = 1; }
+    else ESP_LOGW(TAG, "upload TFT: écran muet (.tft invalide ?) — whmi-wri sur %u débits",
+                  (unsigned)ncands);
+
+    bool ok = false;
+    uint32_t used = detected ? detected : NX_BAUD_BOOT;
+    for (size_t i = 0; i < ncands && !ok; i++) {
+        uint32_t cur = cands[i];
+        set_step("upload_begin: exit reparse");
+        uart_set_baudrate(NX_UART_NUM, cur);
+        /* Écran d'origine Sonoff : son programme réaffirme le reparse mode en
+         * continu — le quitter au boot de l'ESP32 ne suffit pas. Sans effet sur
+         * un écran déjà en mode passif. */
+        exit_reparse_mode();
+
+        for (int attempt = 0; attempt < 2 && !ok; attempt++) {
+            /* whmi-wri s'envoie au débit COURANT de l'écran ; le basculement vers
+             * le débit d'upload n'a lieu qu'APRÈS, des deux côtés. L'envoyer déjà
+             * au nouveau débit (bug corrigé ici) ne marchait que par coïncidence,
+             * tant que les deux valaient 115200. */
+            set_step("upload_begin: send whmi-wri");
+            uart_set_baudrate(NX_UART_NUM, cur);
+            uart_flush_input(NX_UART_NUM);
+            nx_cmd("whmi-wri=%u,%u,0", (unsigned)size_bytes, (unsigned)baud);
+            uart_wait_tx_done(NX_UART_NUM, pdMS_TO_TICKS(500));  /* avant de changer de débit */
+
+            set_step("upload_begin: wait_ack");
+            uart_set_baudrate(NX_UART_NUM, baud);
+            ok = wait_ack_byte(timeout_ms);
+        }
+        if (ok) used = cur;
+    }
+
+    set_step(ok ? "upload_begin: ack reçu" : "upload_begin: timeout ack");
+    if (ok) {
+        s_baud_current = used;
+        ESP_LOGI(TAG, "upload TFT: accusé obtenu (écran à %u bauds)", (unsigned)used);
+    } else {
+        ESP_LOGE(TAG, "upload TFT: pas d'accusé initial (whmi-wri), tous débits tentés");
+        uart_set_baudrate(NX_UART_NUM, NX_BAUD_BOOT);   /* ne pas laisser l'UART désaccordé */
+    }
     return ok;
+}
+
+size_t nx_raw_exchange(const char *cmd, uint32_t baud, uint8_t *rx, size_t cap,
+                       uint32_t window_ms)
+{
+    rx_pause();
+    if (baud) uart_set_baudrate(NX_UART_NUM, baud);
+    uart_flush_input(NX_UART_NUM);
+    if (cmd && cmd[0]) nx_cmd("%s", cmd);
+    size_t n = 0;
+    int64_t deadline = esp_timer_get_time() + (int64_t)window_ms * 1000;
+    while (esp_timer_get_time() < deadline && n < cap) {
+        uint8_t b;
+        if (uart_read_bytes(NX_UART_NUM, &b, 1, pdMS_TO_TICKS(20)) == 1) rx[n++] = b;
+    }
+    if (baud) {
+        /* Revenir au débit de croisière courant plutôt que de rester sur celui
+         * de l'essai — try_baud est statique plus haut, on retente les deux. */
+        if (!try_baud(NX_BAUD_FAST, 200)) try_baud(NX_BAUD_BOOT, 200);
+    }
+    rx_resume();
+    return n;
 }
 
 bool nx_tft_upload_chunk(const uint8_t *data, size_t len, uint32_t timeout_ms)
 {
+    set_step("upload_chunk: write");
     uart_write_bytes(NX_UART_NUM, data, len);
-    return wait_ack_byte(timeout_ms);
+    set_step("upload_chunk: wait_ack");
+    bool ok = wait_ack_byte(timeout_ms);
+    set_step(ok ? "upload_chunk: ack reçu" : "upload_chunk: timeout ack");
+    return ok;
 }
 
 void nx_tft_upload_end(void)
 {
-    /* L'écran redémarre seul après le dernier bloc accusé ; on renégocie notre
-     * débit de croisière et on force un re-sondage (nouveau .tft = nouveau vSpec). */
-    vTaskDelay(pdMS_TO_TICKS(500));
+    /* L'écran redémarre seul après le dernier bloc accusé. Le .tft fraîchement
+     * chargé impose SON débit, qui n'a aucune raison d'être celui d'avant :
+     * laisser le temps au STM32 de redémarrer, puis re-balayer. */
+    set_step("upload_end: attente redémarrage écran");
+    vTaskDelay(pdMS_TO_TICKS(3000));
     nextion_force_reprobe();
-    if (!try_baud(NX_BAUD_FAST, 300)) {
-        try_baud(NX_BAUD_BOOT, 300);
-    }
-    nextion_probe();   /* suspend/resume la tâche RX elle-même */
+    set_step("upload_end: scan baud");
+    s_baud_current = 0;          /* forcer un vrai balayage, pas le débit d'avant */
+    nextion_scan_baud();
+    set_step("upload_end: probe");
+    nextion_probe();   /* pause/reprise de la tâche RX incluse */
+    set_step("upload_end: terminé");
 }

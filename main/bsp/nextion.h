@@ -77,6 +77,42 @@ bool nx_present(nx_obj_t o);
 /** @brief true si la page est utilisable (son objet d'ancrage est présent). */
 bool nx_page_present(nx_page_t p);
 
+/** @brief true si la Variable globale `vSpec` a répondu au dernier sondage
+ *  (sinon : écran d'origine ou .tft non conforme, cf. nextion_probe()). */
+bool nextion_spec_present(void);
+
+/** @brief Révision de `vSpec` lue au dernier sondage réussi, -1 si absente. */
+int32_t nextion_spec_revision(void);
+
+/** @brief Nombre d'objets du registre détectés présents / total au dernier sondage. */
+void nextion_objects_summary(int *present, int *total);
+
+/** @brief Dernier point de contrôle atteint dans le pilote (diagnostic à distance,
+ *  ex. pendant un upload TFT-OTA figé, sans avoir besoin du moniteur série). */
+const char *nextion_last_step(void);
+
+/**
+ * @brief Échange brut de diagnostic : envoie `cmd` (terminateur FF FF FF ajouté,
+ * "" = n'envoie rien, écoute seulement) et collecte tout ce que l'écran émet
+ * pendant `window_ms`. `baud` non nul force ce débit pour l'échange, puis le
+ * débit de croisière est renégocié. Retourne le nombre d'octets reçus dans rx.
+ * Exposé par POST /nx du portail de dev — diagnostic sans moniteur série.
+ */
+size_t nx_raw_exchange(const char *cmd, uint32_t baud, uint8_t *rx, size_t cap,
+                       uint32_t window_ms);
+
+/**
+ * @brief Balaie les débits standard jusqu'à ce que l'écran réponde à `get sleep`.
+ *
+ * Indispensable : un .tft embarque son propre réglage de débit (un projet
+ * Nextion neuf est souvent à 9600), qui change donc à chaque téléversement.
+ * @return le débit retenu, ou 0 si aucun ne répond (l'UART est alors remis à 115200).
+ */
+uint32_t nextion_scan_baud(void);
+
+/** @brief Débit auquel l'écran a répondu au dernier balayage (0 = muet). */
+uint32_t nextion_current_baud(void);
+
 /* --- Écritures, no-op silencieux si l'objet est absent (retour false) --- */
 bool nx_set_txt(nx_obj_t o, const char *s);
 bool nx_set_val(nx_obj_t o, int32_t v);
