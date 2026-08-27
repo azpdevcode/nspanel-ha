@@ -21,6 +21,19 @@ extern "C" {
  */
 esp_err_t tft_ota_run(const char *url);
 
+typedef enum {
+    TFT_OTA_IDLE,      /* jamais lancé depuis le boot */
+    TFT_OTA_RUNNING,
+    TFT_OTA_OK,
+    TFT_OTA_FAILED,
+} tft_ota_state_t;
+
+/** @brief État du dernier (ou du) transfert TFT-OTA. */
+tft_ota_state_t tft_ota_get_state(void);
+
+/** @brief Détail lisible de l'état courant (jamais NULL, ex. "connexion échouée: ..."). */
+const char *tft_ota_get_status(void);
+
 #ifdef __cplusplus
 }
 #endif
