@@ -10,6 +10,11 @@ CONFIG_PARTITION_TABLE_OFFSET=0x8000
 
 # --- OTA / rollback ---
 CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+# esp_https_ota refuse une URL http:// sans ça (ESP_ERR_INVALID_ARG dès
+# esp_https_ota_begin, avant tout transfert). Le .bin est servi depuis le LAN
+# par un http.server local, et l'image est de toute façon validée par le
+# bootloader avant bascule — voir README « Itérer sur le firmware (OTA) ».
+CONFIG_ESP_HTTPS_OTA_ALLOW_HTTP=y
 CONFIG_APP_PROJECT_VER_FROM_CONFIG=y
 CONFIG_APP_PROJECT_VER="0.1.0"
 

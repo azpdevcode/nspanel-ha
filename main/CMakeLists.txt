@@ -11,6 +11,7 @@ idf_component_register(
         "net/config_portal.c"
         "net/dev_portal.c"
         "ota/tft_ota.c"
+        "ota/app_ota.c"
     INCLUDE_DIRS
         "."
         "bsp"

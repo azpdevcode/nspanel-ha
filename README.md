@@ -40,6 +40,30 @@ l'état de la seconde.
 idf.py -p /dev/ttyUSB0 flash monitor
 ```
 
+## Itérer sur le firmware (OTA)
+
+Le **premier** flash passe forcément par l'USB-TTL (ci-dessus). Ensuite tout se
+fait par le réseau, sans rouvrir le panneau :
+
+```bash
+idf.py build
+(cd build && python3 -m http.server 8000)          # dans un autre terminal
+curl -X POST --data-urlencode "url=http://<pc>:8000/nspanel_ha.bin" http://<panneau>/ota
+curl http://<panneau>/status                        # app_ota.state / .status
+```
+
+La progression s'affiche aussi sur l'écran (`tStat` + `jProg` de la page `boot`).
+Le panneau redémarre seul à la fin ; compter ~20 s pour ~950 Ko.
+
+Le rollback bootloader est actif : si l'image installée n'atteint pas
+`esp_ota_mark_app_valid_cancel_rollback()` dans `app_main()`, le bootloader
+revient à la précédente au reset suivant. Un firmware qui ne démarre pas ne
+coûte donc pas une séance de démontage — mais un firmware qui démarre et casse
+le WiFi, si : c'est le seul cas qui impose de ressortir l'USB-TTL.
+
+**Ne pas lancer `/ota` et `/tft` en même temps** — les deux endpoints se
+refusent mutuellement (409), mais autant ne pas compter dessus.
+
 ## Itérer sur l'écran (HMI)
 
 Le `.HMI` est versionné dans `nextion/` — c'est la source du design, à ouvrir

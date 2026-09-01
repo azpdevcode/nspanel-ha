@@ -2,6 +2,7 @@
 #include "config_portal.h"
 #include "nextion.h"
 #include "tft_ota.h"
+#include "app_ota.h"
 #include "wifi.h"
 #include "app_config.h"
 #include "nspanel_io.h"
@@ -92,6 +93,15 @@ static esp_err_t get_status(httpd_req_t *req)
     cJSON_AddStringToObject(ota, "status", tft_ota_get_status());
     cJSON_AddStringToObject(ota, "nx_last_step", nextion_last_step());
 
+    static const char *const app_ota_state_name[] = {
+        [APP_OTA_IDLE] = "idle", [APP_OTA_RUNNING] = "running",
+        [APP_OTA_OK] = "ok", [APP_OTA_FAILED] = "failed",
+    };
+    cJSON *aota = cJSON_AddObjectToObject(root, "app_ota");
+    cJSON_AddStringToObject(aota, "state", app_ota_state_name[app_ota_get_state()]);
+    cJSON_AddStringToObject(aota, "status", app_ota_get_status());
+
+
     char *out = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
     if (!out) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "json");
@@ -127,18 +137,22 @@ static void tft_ota_task(void *arg)
     vTaskDelete(NULL);
 }
 
-static esp_err_t post_tft(httpd_req_t *req)
+static void app_ota_task(void *arg)
 {
-    /* Un seul transfert à la fois : nx_tft_upload_*() partage l'UART écran sans
-     * verrou, et deux tâches concurrentes s'entrelaceraient dessus (upload
-     * corrompu côté écran, fuite de tâches/mémoire si on ne les attend jamais). */
-    if (tft_ota_get_state() == TFT_OTA_RUNNING) {
-        httpd_resp_set_status(req, "409 Conflict");
-        httpd_resp_set_type(req, "text/plain");
-        httpd_resp_sendstr(req, "Un transfert TFT est déjà en cours — voir /status.");
-        return ESP_OK;
-    }
+    char *url = (char *)arg;
+    esp_err_t err = app_ota_run(url);   /* ne rend la main qu'en cas d'échec */
+    ESP_LOGE(TAG, "app_ota_run(%s): %s", url, esp_err_to_name(err));
+    free(url);
+    vTaskDelete(NULL);
+}
 
+/* Corps commun à /tft et /ota : les deux prennent un `url=` en
+ * application/x-www-form-urlencoded et démarrent une tâche de fond. Le duplicat
+ * n'apportait rien d'autre que deux endroits où oublier le url_decode(). */
+static esp_err_t start_url_task(httpd_req_t *req, TaskFunction_t fn,
+                                const char *task_name, uint32_t stack,
+                                const char *reply)
+{
     char raw[256];
     int total = req->content_len;
     if (total <= 0 || total >= (int)sizeof(raw))
@@ -162,13 +176,60 @@ static esp_err_t post_tft(httpd_req_t *req)
     if (!url) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "mem");
 
     httpd_resp_set_type(req, "text/plain");
-    httpd_resp_sendstr(req, "Transfert TFT démarré — voir les logs série.");
+    httpd_resp_sendstr(req, reply);
+    if (xTaskCreate(fn, task_name, stack, url, 5, NULL) != pdPASS) {
+        free(url);
+        ESP_LOGE(TAG, "xTaskCreate(%s) a échoué", task_name);
+    }
+    return ESP_OK;
+}
+
+static esp_err_t post_ota(httpd_req_t *req)
+{
+    if (app_ota_get_state() == APP_OTA_RUNNING) {
+        httpd_resp_set_status(req, "409 Conflict");
+        httpd_resp_set_type(req, "text/plain");
+        httpd_resp_sendstr(req, "Une mise à jour applicative est déjà en cours — voir /status.");
+        return ESP_OK;
+    }
+    /* Pas pendant un transfert TFT : les deux se disputeraient la bande passante
+     * WiFi et app_ota écrit sur l'écran pour afficher sa progression. */
+    if (tft_ota_get_state() == TFT_OTA_RUNNING) {
+        httpd_resp_set_status(req, "409 Conflict");
+        httpd_resp_set_type(req, "text/plain");
+        httpd_resp_sendstr(req, "Un transfert TFT est en cours — réessayez après.");
+        return ESP_OK;
+    }
+    /* 8 Ko comme tft_ota : esp_https_ota embarque le client HTTP et ses frames
+     * TLS, compilées même pour une URL en http:// simple. */
+    return start_url_task(req, app_ota_task, "app_ota", 8192,
+                          "Mise à jour firmware démarrée — voir /status.");
+}
+
+static esp_err_t post_tft(httpd_req_t *req)
+{
+    /* Un seul transfert à la fois. Le bus écran a désormais un verrou
+     * (nx_bus_acquire), donc deux transferts ne s'entrelaceraient plus sur
+     * l'UART — mais le second attendrait 10 s puis échouerait, et rien
+     * n'attend ces tâches : autant refuser franchement ici. */
+    if (tft_ota_get_state() == TFT_OTA_RUNNING) {
+        httpd_resp_set_status(req, "409 Conflict");
+        httpd_resp_set_type(req, "text/plain");
+        httpd_resp_sendstr(req, "Un transfert TFT est déjà en cours — voir /status.");
+        return ESP_OK;
+    }
+    if (app_ota_get_state() == APP_OTA_RUNNING) {
+        httpd_resp_set_status(req, "409 Conflict");
+        httpd_resp_set_type(req, "text/plain");
+        httpd_resp_sendstr(req, "Une mise à jour firmware est en cours — réessayez après.");
+        return ESP_OK;
+    }
     /* 8 Ko : le tampon de transfert de tft_ota_run() (4 Ko, cf. CHUNK_SIZE) est
      * une variable locale sur CETTE pile, plus les frames internes
      * d'esp_http_client (TLS compilé même pour du HTTP simple). 4 Ko seul a
      * déjà causé un débordement de pile (reset en pleine requête). */
-    xTaskCreate(tft_ota_task, "tft_ota", 8192, url, 5, NULL);
-    return ESP_OK;
+    return start_url_task(req, tft_ota_task, "tft_ota", 8192,
+                          "Transfert TFT démarré — voir /status.");
 }
 
 /* POST /nx : REPL série vers l'écran, via HTTP. Corps form-urlencoded :
@@ -262,11 +323,13 @@ esp_err_t dev_portal_register(void)
     httpd_uri_t status  = { .uri = "/status", .method = HTTP_GET,  .handler = get_status };
     httpd_uri_t nx      = { .uri = "/nx",     .method = HTTP_POST, .handler = post_nx };
     httpd_uri_t scan    = { .uri = "/scan",   .method = HTTP_POST, .handler = post_scan };
+    httpd_uri_t ota     = { .uri = "/ota",    .method = HTTP_POST, .handler = post_ota };
     httpd_register_uri_handler(h, &bridge);
     httpd_register_uri_handler(h, &tft);
     httpd_register_uri_handler(h, &status);
     httpd_register_uri_handler(h, &nx);
     httpd_register_uri_handler(h, &scan);
-    ESP_LOGI(TAG, "routes de développement prêtes (/bridge, /tft, /status, /nx, /scan)");
+    httpd_register_uri_handler(h, &ota);
+    ESP_LOGI(TAG, "routes de développement prêtes (/bridge, /tft, /ota, /status, /nx, /scan)");
     return ESP_OK;
 }
