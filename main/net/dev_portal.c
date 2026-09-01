@@ -3,6 +3,7 @@
 #include "nextion.h"
 #include "tft_ota.h"
 #include "app_ota.h"
+#include "ui.h"
 #include "wifi.h"
 #include "app_config.h"
 #include "nspanel_io.h"
@@ -101,6 +102,19 @@ static esp_err_t get_status(httpd_req_t *req)
     cJSON_AddStringToObject(aota, "state", app_ota_state_name[app_ota_get_state()]);
     cJSON_AddStringToObject(aota, "status", app_ota_get_status());
 
+    /* Journal tactile : sert à relever les `id` des hotspots de navigation,
+     * que rien d'autre n'expose (voir ui.h). */
+    ui_touch_rec_t touches[16];
+    int nt = ui_touch_history(touches, 16);
+    cJSON *tl = cJSON_AddArrayToObject(root, "touches");
+    for (int i = 0; i < nt; i++) {
+        cJSON *e = cJSON_CreateObject();
+        cJSON_AddNumberToObject(e, "page", touches[i].page);
+        cJSON_AddNumberToObject(e, "cid", touches[i].cid);
+        cJSON_AddBoolToObject(e, "pressed", touches[i].pressed);
+        cJSON_AddNumberToObject(e, "uptime_s", touches[i].uptime_s);
+        cJSON_AddItemToArray(tl, e);
+    }
 
     char *out = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);

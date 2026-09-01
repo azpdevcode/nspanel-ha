@@ -24,6 +24,7 @@
 #include "dev_portal.h"
 #include "nspanel_io.h"
 #include "nextion.h"
+#include "ui.h"
 #include "app_diag.h"
 
 static const char *TAG = "main";
@@ -52,23 +53,6 @@ static void on_ntc(float c)
     if (c == c) ESP_LOGD(TAG, "NTC: %.1f °C", c);   /* c==c écarte NAN sans <math.h> ici */
 }
 
-/* Rafraîchit la page boot avec l'état WiFi/HA courant. Appelé en boucle tant
- * que le panneau n'est pas allé plus loin que la phase 1 (pas encore de home). */
-static void boot_status_tick(void)
-{
-    char line[96];
-    if (wifi_is_connected()) {
-        char ip[16];
-        wifi_get_ip(ip, sizeof(ip));
-        snprintf(line, sizeof(line), "WiFi OK  %s\nHA: %s",
-                 ip, app_config_ha_set() ? app_config_ha_url() : "non configuré");
-    } else if (wifi_failed()) {
-        snprintf(line, sizeof(line), "WiFi KO — configurez via\nle portail (voir écran suivant)");
-    } else {
-        snprintf(line, sizeof(line), "Connexion WiFi…");
-    }
-    nx_set_txt(BOOT_STATUS, line);
-}
 
 void app_main(void)
 {
@@ -96,8 +80,6 @@ void app_main(void)
     }
 
     ESP_ERROR_CHECK(nextion_init());
-    nx_page(NXP_BOOT);
-    nx_set_txt(BOOT_STATUS, "Démarrage…");
 
     app_config_init();
 
@@ -115,6 +97,10 @@ void app_main(void)
     /* En dernier : voir config_portal_register_fallback() pour pourquoi l'ordre compte. */
     TRY_INIT(config_portal_register_fallback(), "config_portal_register_fallback");
 
+    /* Après les portails : ui_task écrit l'écran, et /status doit pouvoir
+     * répondre même si l'écran est absent. */
+    TRY_INIT(ui_start(), "ui_start");
+
     app_diag_start();
     app_diag_log_mem("init done");
 
@@ -123,7 +109,6 @@ void app_main(void)
      * pouvoir le constater à tout moment sur une écoute de quelques secondes. */
     int tick = 0;
     for (;;) {
-        boot_status_tick();
         if (++tick % 3 == 0) {   /* ~6 s */
             char ip[16] = "-";
             wifi_get_ip(ip, sizeof(ip));

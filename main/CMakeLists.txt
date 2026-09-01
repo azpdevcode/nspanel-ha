@@ -12,6 +12,7 @@ idf_component_register(
         "net/dev_portal.c"
         "ota/tft_ota.c"
         "ota/app_ota.c"
+        "ui/ui.c"
     INCLUDE_DIRS
         "."
         "bsp"

@@ -1,0 +1,18 @@
+/*
+ * Zones tactiles de navigation : NX_NAV(page source, cid, page cible)
+ *
+ * Le `cid` est l'`id` que le Nextion Editor attribue au hotspot. Il n'apparaît
+ * nulle part ailleurs dans les sources et CHANGE si le composant est supprimé
+ * puis recréé — c'est le seul endroit à corriger dans ce cas.
+ *
+ * Pour le relever sans ouvrir l'Editor : toucher la zone, puis lire le tableau
+ * `touches` de /status (voir ui.h).
+ *
+ * Une cible absente du .tft est un no-op silencieux : nx_page() refuse une page
+ * non sondée, donc déclarer la navigation avant d'avoir dessiné les pages ne
+ * casse rien.
+ */
+NX_NAV(NXP_HOME, 18, NXP_LIGHTS)
+NX_NAV(NXP_HOME, 19, NXP_CLIMATE)
+NX_NAV(NXP_HOME, 20, NXP_WEATHER)
+NX_NAV(NXP_HOME, 21, NXP_CFG)
