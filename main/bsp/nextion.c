@@ -13,6 +13,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
+#include "freertos/semphr.h"
 #include "driver/uart.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
@@ -83,6 +84,37 @@ static void rx_resume(void)
 
 /* ---- Bas niveau UART ---- */
 
+/* ---- Verrou du bus écran ----
+ *
+ * L'UART écran est écrit par plusieurs tâches : la boucle applicative (statut
+ * boot toutes les 2 s), le serveur HTTP (/nx, /scan) et la tâche TFT-OTA. Sans
+ * verrou, une écriture de 50 octets s'insère au milieu d'un bloc de 4 Ko du
+ * flux .tft : l'écran continue d'accuser ses blocs — le compte d'octets reste
+ * juste — mais écrit un .tft décalé, et affiche « System data ERROR! » au
+ * redémarrage. Transfert « réussi », écran mort ; c'est exactement le symptôme
+ * qui a coûté plusieurs heures.
+ *
+ * Récursif : nx_tft_upload_*() et nextion_probe() prennent le verrou puis
+ * appellent nx_cmd()/get_sync() qui le reprennent depuis la même tâche.
+ *
+ * Les écritures d'UI sont des rafraîchissements idempotents : plutôt que de
+ * bloquer la boucle applicative pendant les 45 s d'un upload, elles ABANDONNENT
+ * si le bus est pris (voir NX_BUS_WAIT_MS). La prochaine passe les rejouera. */
+static SemaphoreHandle_t s_bus_lock;
+
+#define NX_BUS_WAIT_MS 50
+
+bool nx_bus_acquire(uint32_t timeout_ms)
+{
+    if (!s_bus_lock) return true;   /* avant nextion_init() : mono-tâche */
+    return xSemaphoreTakeRecursive(s_bus_lock, pdMS_TO_TICKS(timeout_ms)) == pdTRUE;
+}
+
+void nx_bus_release(void)
+{
+    if (s_bus_lock) xSemaphoreGiveRecursive(s_bus_lock);
+}
+
 static void uart_send_raw(const void *data, size_t len)
 {
     uart_write_bytes(NX_UART_NUM, data, len);
@@ -103,17 +135,59 @@ void nx_cmd(const char *fmt, ...)
     va_end(ap);
     if (n <= 0) return;
     if ((size_t)n >= sizeof(buf)) n = sizeof(buf) - 1;
+    if (!nx_bus_acquire(NX_BUS_WAIT_MS)) {
+        ESP_LOGD(TAG, "bus occupé, commande abandonnée : %.40s", buf);
+        return;
+    }
     uart_send_raw(buf, (size_t)n);
     send_terminator();
+    nx_bus_release();
 }
 
-/* Échappe " et \ pour une insertion sûre dans <obj>.txt="...". */
-static void escape_into(const char *in, char *out, size_t cap)
+/* Transcode UTF-8 -> Latin-1 et échappe " et \ pour <obj>.txt="...".
+ *
+ * Les polices .zi du projet sont générées en iso-8859-1, un octet par
+ * caractère : le mode utf-8 du générateur Nextion produit une table couvrant
+ * les 65 536 codes du BMP, soit ~670 Ko par police au lieu de quelques
+ * dizaines (voir design/HMI-SPEC.md). Home Assistant, lui, renvoie de
+ * l'UTF-8 — d'où cette conversion, sans quoi « Éclairage » et « 21.5° »
+ * arriveraient en mojibake.
+ *
+ * Tout ce qui sort de Latin-1 devient '?', y compris U+00FF : son octet 0xFF
+ * serait pris pour le début d'un terminateur FF FF FF. */
+static void latin1_escape_into(const char *in, char *out, size_t cap)
 {
+    const uint8_t *p = (const uint8_t *)in;
     size_t o = 0;
-    for (size_t i = 0; in[i] && o + 2 < cap; i++) {
-        if (in[i] == '"' || in[i] == '\\') out[o++] = '\\';
-        out[o++] = in[i];
+
+    while (*p && o + 2 < cap) {
+        uint8_t c = *p;
+        uint32_t cp;
+
+        /* Les && court-circuitent : p[1]/p[2]/p[3] ne sont lus que si l'octet
+         * précédent était une continuation, donc jamais au-delà du '\0'. */
+        if (c < 0x80) {
+            cp = c;
+            p += 1;
+        } else if ((c & 0xE0) == 0xC0 && (p[1] & 0xC0) == 0x80) {
+            cp = ((uint32_t)(c & 0x1F) << 6) | (p[1] & 0x3F);
+            p += 2;
+        } else if ((c & 0xF0) == 0xE0 && (p[1] & 0xC0) == 0x80 &&
+                   (p[2] & 0xC0) == 0x80) {
+            cp = 0x100;                       /* hors Latin-1 par construction */
+            p += 3;
+        } else if ((c & 0xF8) == 0xF0 && (p[1] & 0xC0) == 0x80 &&
+                   (p[2] & 0xC0) == 0x80 && (p[3] & 0xC0) == 0x80) {
+            cp = 0x100;
+            p += 4;
+        } else {
+            cp = 0x100;                       /* octet isolé / séquence cassée */
+            p += 1;
+        }
+
+        char ch = (cp < 0xFF) ? (char)cp : '?';
+        if (ch == '"' || ch == '\\') out[o++] = '\\';
+        out[o++] = ch;
     }
     out[o] = '\0';
 }
@@ -160,41 +234,68 @@ typedef struct {
 /* attr == NULL : variable SYSTÈME (sleep, dim, baud…), dont la syntaxe est
  * `get <nom>` sans suffixe — `get sleep.val` est invalide et reste sans réponse,
  * quel que soit le débit. */
+/* Nom pleinement qualifié `<page>.<objet>`.
+ *
+ * Nextion n'expose un composant sous son nom nu que pendant que sa page est
+ * affichée ; hors de là, `get tClock.txt` répond 0x1A même si l'objet existe.
+ * Le préfixe de page lève cette restriction en lecture comme en écriture, et la
+ * valeur écrite survit à la navigation — vérifié sur la cible. C'est ce qui
+ * dispense de mettre chaque composant en `vscope=global` dans l'Editor : la
+ * page est déjà déclarée dans nx_objects.def, donc la contrainte disparaît du
+ * côté humain, là où elle était systématiquement oubliée. */
+static const char *qname(nx_obj_t o, char *buf, size_t cap)
+{
+    snprintf(buf, cap, "%s.%s", s_page_name[s_obj_meta[o].page], s_obj_meta[o].name);
+    return buf;
+}
+
 static bool get_sync(const char *name, const char *attr, nx_get_result_t *res)
 {
     memset(res, 0, sizeof(*res));
+    /* Écriture ET lecture sous le même verrou : sans ça une commande d'une
+     * autre tâche s'intercale et c'est SA réponse qu'on lirait. Un seul point
+     * de sortie pour ne pas risquer d'oublier le nx_bus_release(). */
+    if (!nx_bus_acquire(NX_BUS_WAIT_MS)) return false;
+
     uart_flush_input(NX_UART_NUM);
     if (attr) nx_cmd("get %s.%s", name, attr);
     else      nx_cmd("get %s", name);
 
     uint8_t frame[16];
     size_t flen = 0;
+    bool ok = false;
+
     if (!read_frame(frame, sizeof(frame), &flen, 300)) {
         ESP_LOGD(TAG, "get %s%s%s: pas de réponse (timeout)",
                  name, attr ? "." : "", attr ? attr : "");
-        return false;
-    }
-    if (flen == 0) return false;
-    switch (frame[0]) {
-    case 0x71: /* numérique : 4 octets little-endian après le code */
-        if (flen >= 5) {
-            res->is_num = true;
-            res->num = (int32_t)(frame[1] | (frame[2] << 8) | (frame[3] << 16) | (frame[4] << 24));
+    } else if (flen > 0) {
+        switch (frame[0]) {
+        case 0x71: /* numérique : 4 octets little-endian après le code */
+            if (flen >= 5) {
+                res->is_num = true;
+                res->num = (int32_t)(frame[1] | (frame[2] << 8) |
+                                     (frame[3] << 16) | (frame[4] << 24));
+            }
+            res->ok = true;
+            ok = true;
+            break;
+        case 0x70: /* chaîne : présence confirmée, contenu ignoré ici */
+            res->ok = true;
+            ok = true;
+            break;
+        case 0x1A:
+            ESP_LOGD(TAG, "get %s%s%s: composant/attribut inconnu (0x1A)",
+                     name, attr ? "." : "", attr ? attr : "");
+            break;
+        default:
+            ESP_LOGD(TAG, "get %s%s%s: code retour inattendu 0x%02X",
+                     name, attr ? "." : "", attr ? attr : "", frame[0]);
+            break;
         }
-        res->ok = true;
-        return true;
-    case 0x70: /* chaîne : présence confirmée, contenu ignoré ici */
-        res->ok = true;
-        return true;
-    case 0x1A:
-        ESP_LOGD(TAG, "get %s%s%s: composant/attribut inconnu (0x1A)",
-                 name, attr ? "." : "", attr ? attr : "");
-        return false;
-    default:
-        ESP_LOGD(TAG, "get %s%s%s: code retour inattendu 0x%02X",
-                 name, attr ? "." : "", attr ? attr : "", frame[0]);
-        return false;
     }
+
+    nx_bus_release();
+    return ok;
 }
 
 /* ---- NVS : cache du bitmap de présence, keyé par révision vSpec ---- */
@@ -251,19 +352,28 @@ void nextion_force_reprobe(void)
 
 void nextion_probe(void)
 {
+    /* 68 allers-retours : sans le verrou tenu de bout en bout, une écriture
+     * d'UI intercalée fausserait la réponse lue pour l'objet en cours. */
+    if (!nx_bus_acquire(5000)) {
+        ESP_LOGW(TAG, "sondage annulé : bus écran occupé");
+        return;
+    }
     rx_pause();
 
     for (int i = 0; i < NXP_COUNT; i++) s_page_anchor[i] = NX_OBJ_COUNT;
     memset(s_present, 0, sizeof(s_present));
 
     nx_get_result_t r;
-    s_have_spec = get_sync("vSpec", "val", &r) && r.is_num;
+    char vspec_q[40];
+    snprintf(vspec_q, sizeof(vspec_q), "%s.vSpec", s_page_name[NXP_BOOT]);
+    s_have_spec = get_sync(vspec_q, "val", &r) && r.is_num;
     s_spec_rev = s_have_spec ? r.num : -1;
 
     if (!s_have_spec) {
         ESP_LOGW(TAG, "vSpec absente — écran d'origine ou HMI non conforme, "
                        "tous les objets restent marqués absents");
         rx_resume();
+        nx_bus_release();
         return;
     }
 
@@ -274,7 +384,9 @@ void nextion_probe(void)
                  (long)s_spec_rev, NX_OBJ_COUNT);
         int found = 0;
         for (int i = 0; i < NX_OBJ_COUNT; i++) {
-            s_present[i] = get_sync(s_obj_meta[i].name, s_obj_meta[i].attr, &r);
+            char q[40];
+            s_present[i] = get_sync(qname((nx_obj_t)i, q, sizeof(q)),
+                                    s_obj_meta[i].attr, &r);
             if (s_present[i]) found++;
         }
         ESP_LOGI(TAG, "sondage terminé : %d/%d objets présents", found, NX_OBJ_COUNT);
@@ -288,6 +400,7 @@ void nextion_probe(void)
     }
 
     rx_resume();
+    nx_bus_release();
 }
 
 bool nx_present(nx_obj_t o)
@@ -320,29 +433,38 @@ void nextion_objects_summary(int *present, int *total)
 bool nx_set_txt(nx_obj_t o, const char *s)
 {
     if (!nx_present(o)) return false;
-    char esc[192];
-    escape_into(s ? s : "", esc, sizeof(esc));
-    nx_cmd("%s.txt=\"%s\"", s_obj_meta[o].name, esc);
+    char esc[192], q[40];
+    latin1_escape_into(s ? s : "", esc, sizeof(esc));
+    nx_cmd("%s.txt=\"%s\"", qname(o, q, sizeof(q)), esc);
     return true;
 }
 
+/* Écrit sur l'attribut numérique DÉCLARÉ dans nx_objects.def, pas sur `.val` en
+ * dur : une Progress bar expose `val`, un Picture `pic`. C'est déjà l'attribut
+ * que nextion_probe() a sondé, donc présence et écriture visent la même case. */
 bool nx_set_val(nx_obj_t o, int32_t v)
 {
     if (!nx_present(o)) return false;
-    nx_cmd("%s.val=%ld", s_obj_meta[o].name, (long)v);
+    char q[40];
+    nx_cmd("%s.%s=%ld", qname(o, q, sizeof(q)), s_obj_meta[o].attr, (long)v);
     return true;
 }
 
 bool nx_set_pco(nx_obj_t o, uint16_t rgb565)
 {
     if (!nx_present(o)) return false;
-    nx_cmd("%s.pco=%u", s_obj_meta[o].name, (unsigned)rgb565);
+    char q[40];
+    nx_cmd("%s.pco=%u", qname(o, q, sizeof(q)), (unsigned)rgb565);
     return true;
 }
 
 bool nx_vis(nx_obj_t o, bool on)
 {
     if (!nx_present(o)) return false;
+    /* Seule écriture qui reste en nom nu : `vis` refuse un nom qualifié
+     * (répond 0x02, « nom de composant invalide »). Elle n'a donc d'effet que
+     * si la page de l'objet est affichée — ce qui est aussi le seul moment où
+     * une bascule de visibilité se voit. */
     nx_cmd("vis %s,%d", s_obj_meta[o].name, on ? 1 : 0);
     return true;
 }
@@ -465,12 +587,18 @@ static const uint32_t s_baud_candidates[] = {
 
 uint32_t nextion_scan_baud(void)
 {
+    if (!nx_bus_acquire(5000)) {
+        ESP_LOGW(TAG, "balayage annulé : bus écran occupé");
+        return 0;
+    }
+
     rx_pause();
     for (size_t i = 0; i < sizeof(s_baud_candidates) / sizeof(s_baud_candidates[0]); i++) {
         if (try_baud(s_baud_candidates[i], 300)) {
             s_baud_current = s_baud_candidates[i];
             ESP_LOGI(TAG, "écran détecté à %u bauds", (unsigned)s_baud_current);
             rx_resume();
+            nx_bus_release();
             return s_baud_current;
         }
     }
@@ -480,6 +608,7 @@ uint32_t nextion_scan_baud(void)
     ESP_LOGW(TAG, "aucun débit ne répond (%d candidats testés)",
              (int)(sizeof(s_baud_candidates) / sizeof(s_baud_candidates[0])));
     rx_resume();
+    nx_bus_release();
     return 0;
 }
 
@@ -523,6 +652,9 @@ esp_err_t nextion_init(void)
                       "dans l'ordre : reparse mode non quitté, écran encore en "
                       "démarrage, câblage.", NX_TX_PIN, NX_RX_PIN);
     }
+
+    s_bus_lock = xSemaphoreCreateRecursiveMutex();
+    if (!s_bus_lock) return ESP_ERR_NO_MEM;
 
     s_touch_q = xQueueCreate(8, sizeof(nx_touch_t));
     if (!s_touch_q) return ESP_ERR_NO_MEM;
@@ -579,8 +711,20 @@ static char s_last_step[48] = "-";
 static void set_step(const char *s) { strncpy(s_last_step, s, sizeof(s_last_step) - 1); }
 const char *nextion_last_step(void) { return s_last_step; }
 
+/* Le verrou du bus est pris ici et relâché par nx_tft_upload_end(), pas à
+ * chaque bloc : c'est TOUT le transfert qui doit être exclusif. Une seule
+ * écriture d'UI intercalée décale le .tft reçu sans qu'aucun accusé ne
+ * manque — l'écran boote alors sur « System data ERROR! ». Asymétrique, donc :
+ * si begin échoue il relâche lui-même, et l'appelant n'appelle end() que si
+ * begin a réussi (voir ota/tft_ota.c). */
 bool nx_tft_upload_begin(uint32_t size_bytes, uint32_t baud, uint32_t timeout_ms)
 {
+    set_step("upload_begin: attente du bus écran");
+    if (!nx_bus_acquire(10000)) {
+        ESP_LOGE(TAG, "upload TFT: bus écran occupé, transfert refusé");
+        set_step("upload_begin: bus occupé");
+        return false;
+    }
     set_step("upload_begin: suspend rx_task");
     rx_pause();
 
@@ -637,6 +781,7 @@ bool nx_tft_upload_begin(uint32_t size_bytes, uint32_t baud, uint32_t timeout_ms
     } else {
         ESP_LOGE(TAG, "upload TFT: pas d'accusé initial (whmi-wri), tous débits tentés");
         uart_set_baudrate(NX_UART_NUM, NX_BAUD_BOOT);   /* ne pas laisser l'UART désaccordé */
+        nx_bus_release();
     }
     return ok;
 }
@@ -644,6 +789,7 @@ bool nx_tft_upload_begin(uint32_t size_bytes, uint32_t baud, uint32_t timeout_ms
 size_t nx_raw_exchange(const char *cmd, uint32_t baud, uint8_t *rx, size_t cap,
                        uint32_t window_ms)
 {
+    if (!nx_bus_acquire(5000)) return 0;
     rx_pause();
     if (baud) uart_set_baudrate(NX_UART_NUM, baud);
     uart_flush_input(NX_UART_NUM);
@@ -660,6 +806,7 @@ size_t nx_raw_exchange(const char *cmd, uint32_t baud, uint8_t *rx, size_t cap,
         if (!try_baud(NX_BAUD_FAST, 200)) try_baud(NX_BAUD_BOOT, 200);
     }
     rx_resume();
+    nx_bus_release();
     return n;
 }
 
@@ -687,4 +834,5 @@ void nx_tft_upload_end(void)
     set_step("upload_end: probe");
     nextion_probe();   /* pause/reprise de la tâche RX incluse */
     set_step("upload_end: terminé");
+    nx_bus_release();  /* pris par nx_tft_upload_begin() */
 }

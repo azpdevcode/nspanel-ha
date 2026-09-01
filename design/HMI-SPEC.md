@@ -16,14 +16,31 @@ modification ici doit se refléter dans ces deux fichiers (et réciproquement).
   `.tft` chargé — celui d'origine Sonoff le réaffirme en continu. C'est le
   firmware ESP32 qui l'en sort (`exit_reparse_mode()` dans `bsp/nextion.c`),
   au boot et avant chaque upload. Ne pas chercher de case à cocher.
-- Tout composant écrit par le firmware doit avoir `vscope=global`, sinon
-  impossible de le pré-remplir avant d'y naviguer.
+- **`vscope` : rien à faire, laisser `local`.** Le firmware adresse tout objet
+  par son chemin complet `<page>.<objet>.<attribut>`, construit à partir de la
+  page déclarée dans `nx_objects.def` (`qname()` dans `bsp/nextion.c`). Vérifié
+  sur la cible : sous son nom nu, un composant ne répond que pendant que sa page
+  est affichée (`0x1A` sinon) ; qualifié, il répond en lecture comme en écriture
+  depuis n'importe quelle page, et la valeur écrite survit à la navigation.
+  Seule exception : `vis`, qui refuse un nom qualifié (`0x02`) et ne vaut donc
+  que pour la page affichée.
+- Symptôme si un jour ça régresse : `objects_present` reste à la seule page
+  affichée après un sondage complet. Se diagnostique en deux appels —
+  `curl -X POST --data-urlencode "cmd=get home.tClock.txt" http://<panneau>/nx`
+  doit renvoyer `70 …`, un `1A` désignant un objet vraiment absent.
 - Polices `.zi` (chasse fixe) : `f0` 16 px, `f1` 24 px, `f2` 48 px.
-  **Restreindre le jeu de caractères à la génération** (ASCII, ou Latin-1 si on
-  veut les accents) : avec un jeu large, une seule police 16 px a produit
-  2,03 Mo sur un `.tft` de 2,43 Mo — soit 84 % du fichier, et plusieurs minutes
-  par upload à 115200 bauds au lieu de quelques secondes. Le panneau Output de
-  l'Editor donne `Total size of font:` — c'est le chiffre à surveiller.
+  **Générer en encodage `iso-8859-1`, jamais `utf-8`.** C'est l'encodage qui
+  fait la taille, pas les cases « Latin base / Latin-1 » cochées : en mode
+  utf-8 le générateur produit une table couvrant les 65 536 codes du BMP, dont
+  ~65 300 vides à ~10 octets pièce, soit un plancher de ~670 Ko par police
+  quelle que soit sa hauteur (mesuré : `f1` 24 px = 671 Ko, `f2` 48 px = 700 Ko,
+  4 % d'écart pour 4× la surface de glyphe). En `iso-8859-1` : 224 codes, ~5 Ko
+  en 16 px, ~50 Ko en 48 px — accents français et `°` compris. L'encodage d'un
+  `.zi` se lit à l'offset 0x2c du fichier, le nombre de codes à l'offset 0x0c.
+  Le panneau Output de l'Editor donne `Total size of font:` — viser < 100 Ko.
+- Corollaire : l'écran attend **un octet par caractère**, Home Assistant renvoie
+  de l'UTF-8. La conversion se fait dans `latin1_escape_into()` (`bsp/nextion.c`),
+  sur le chemin de `nx_set_txt()` ; hors Latin-1 → `?`.
 - Icônes : pas de police d'icônes — glyphes Material exportés en PNG, ajoutés
   en ressources Picture, affichés par `pic`/`picq`.
 - Palette RGB565 dérivée de `ui_common.h` du panneau P4 :

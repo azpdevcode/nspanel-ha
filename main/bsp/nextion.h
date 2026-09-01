@@ -113,8 +113,21 @@ uint32_t nextion_scan_baud(void);
 /** @brief Débit auquel l'écran a répondu au dernier balayage (0 = muet). */
 uint32_t nextion_current_baud(void);
 
+/* --- Verrou du bus écran ---
+ *
+ * À prendre par toute séquence qui doit être exclusive sur l'UART écran : un
+ * aller-retour get/réponse, ou un transfert TFT entier. Récursif (une tâche
+ * qui le détient peut appeler nx_cmd()). Les écritures d'UI l'abandonnent au
+ * bout de quelques dizaines de ms plutôt que d'attendre — un rafraîchissement
+ * perdu se rejoue à la passe suivante, alors qu'un blocage de 45 s pendant un
+ * upload TFT gèlerait la boucle applicative. */
+bool nx_bus_acquire(uint32_t timeout_ms);
+void nx_bus_release(void);
+
 /* --- Écritures, no-op silencieux si l'objet est absent (retour false) --- */
 bool nx_set_txt(nx_obj_t o, const char *s);
+/** @brief Écrit l'attribut numérique déclaré pour l'objet dans nx_objects.def
+ *         (`val` pour une Progress bar / un Slider, `pic` pour un Picture). */
 bool nx_set_val(nx_obj_t o, int32_t v);
 bool nx_set_pco(nx_obj_t o, uint16_t rgb565);
 bool nx_vis(nx_obj_t o, bool on);
