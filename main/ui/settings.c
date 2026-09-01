@@ -16,7 +16,10 @@ static const char *TAG = "settings";
 
 static char s_default_room[48];
 static int  s_brightness_pct = 80;
-static int  s_sleep_enabled  = 1;
+/* Désactivée par défaut : pas encore de page cfg (phase 4) pour la
+ * reconfigurer depuis l'écran, donc pas de moyen de sortir d'une veille
+ * gênante autrement que par le portail web. À reconsidérer quand cfg existe. */
+static int  s_sleep_enabled  = 0;
 static int  s_sleep_timeout_sec = 60;
 
 void settings_load(void)
@@ -37,7 +40,15 @@ void settings_load(void)
 
     /* Effets de bord matériels : la veille est déléguée à l'écran (thsp/thup),
      * cf. design/FORK-PLAN.md section « Veille ». Page-agnostiques : toujours
-     * tentés, no-op silencieux si l'écran n'a pas encore répondu. */
+     * tentés, no-op silencieux si l'écran n'a pas encore répondu.
+     *
+     * `sleep=0` explicite, pas seulement thsp : le Nextion a son propre MCU
+     * (STM32G0), indépendant de l'ESP32 — un reboot applicatif (OTA) ne
+     * réinitialise PAS son état de veille. Sans ce réveil forcé, un écran
+     * endormi avant l'update reste noir après, alors que thsp=0 empêche
+     * seulement une FUTURE mise en veille (constaté : c'est exactement ce qui
+     * s'est produit lors de la vérification de ce correctif). */
+    nx_cmd("sleep=0");
     nx_dim((uint8_t)s_brightness_pct);
     if (s_sleep_enabled) nx_cmd("thsp=%d", s_sleep_timeout_sec);
     else nx_cmd("thsp=0");

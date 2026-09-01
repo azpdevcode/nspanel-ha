@@ -137,41 +137,82 @@ static void boot_page_tick(void)
 }
 
 /* N'écrit que si la valeur a changé : à 4 Hz, réécrire l'heure chaque tick
- * saturerait l'UART pour rien et ferait clignoter le texte. */
+ * saturerait l'UART pour rien et ferait clignoter le texte.
+ *
+ * `force` contourne le cache : nx_set_txt() renvoie true dès que l'objet est
+ * *présent* dans le .tft (nextion.c), pas quand la commande a réellement
+ * atteint l'écran — nx_cmd()/nx_bus_acquire() abandonnent silencieusement en
+ * cas de contention (ex. pendant nextion_probe() au boot). Sans resynchro
+ * périodique, une écriture perdue dans cette fenêtre reste perdue pour
+ * toujours : le cache la croit « envoyée » et plus rien ne la retente, même
+ * quand la vraie valeur change ensuite. */
 #define UI_CACHE_LEN 32
 
-static void set_if_changed(nx_obj_t o, char cache[UI_CACHE_LEN], const char *val)
+static void set_if_changed(nx_obj_t o, char cache[UI_CACHE_LEN], const char *val, bool force)
 {
-    if (strncmp(cache, val, UI_CACHE_LEN) == 0) return;
+    if (!force && strncmp(cache, val, UI_CACHE_LEN) == 0) return;
     snprintf(cache, UI_CACHE_LEN, "%s", val);
     nx_set_txt(o, val);
 }
 
-/* Accord au singulier : "1 lumière allumée" plutôt que "1 lumières allumées". */
+/* Resynchronisation périodique (indépendante du cache) des champs qui ne
+ * s'auto-réparent pas naturellement (contrairement à l'horloge, qui change
+ * chaque minute) — ~20 s à UI_TICK_MS = 250 ms, loin du seuil de flicker/UART
+ * documenté pour HOME_CLOCK/HOME_DATE. */
+#define UI_RESYNC_TICKS (20000 / UI_TICK_MS)
+
+static bool resync_due(void)
+{
+    static uint32_t ticks;
+    return (++ticks % UI_RESYNC_TICKS) == 0;
+}
+
+/* Écrit un placeholder neutre une seule fois dans les champs pas encore
+ * alimentés par le firmware (météo : phase 3, temp. intérieure/NTC : phase 4)
+ * — mieux que le "newtxt" par défaut de l'Editor laissé à l'écran. No-op
+ * silencieux si l'objet est absent du .tft, comme partout ailleurs. */
+static void home_page_placeholders_once(void)
+{
+    static bool done;
+    if (done) return;
+    done = true;
+    nx_set_txt(HOME_TEMP, "--");
+    nx_set_txt(HOME_SET, "--");
+    nx_set_txt(HOME_WX_TEMP, "--");
+    nx_set_txt(HOME_WX_COND, "--");
+}
+
 static void home_page_tick(const struct tm *tm)
 {
     static char clock_cache[UI_CACHE_LEN], date_cache[UI_CACHE_LEN];
     static char room_cache[UI_CACHE_LEN], lights_cache[UI_CACHE_LEN];
     char buf[UI_CACHE_LEN];
+    bool force = resync_due();
+
+    home_page_placeholders_once();
 
     snprintf(buf, sizeof(buf), "%02d:%02d", tm->tm_hour, tm->tm_min);
-    set_if_changed(HOME_CLOCK, clock_cache, buf);
+    set_if_changed(HOME_CLOCK, clock_cache, buf, false);
 
     snprintf(buf, sizeof(buf), "%s %d %s",
              s_days[tm->tm_wday % 7], tm->tm_mday, s_months[tm->tm_mon % 12]);
-    set_if_changed(HOME_DATE, date_cache, buf);
+    set_if_changed(HOME_DATE, date_cache, buf, false);
 
     if (rooms_model_dirty()) ESP_LOGI(TAG, "modèle pièces à jour, rafraîchissement home");
 
+    /* "pièce ?" (ASCII) plutôt qu'un tiret cadratin : hors Latin-1, il serait
+     * de toute façon rendu '?' par latin1_escape_into (nextion.c). */
     int cur = rooms_current();
-    snprintf(buf, sizeof(buf), "%s", rooms_count() ? rooms_name(cur) : "—");
-    set_if_changed(HOME_ROOM, room_cache, buf);
+    snprintf(buf, sizeof(buf), "%s", rooms_count() ? rooms_name(cur) : "pièce ?");
+    set_if_changed(HOME_ROOM, room_cache, buf, force);
 
+    /* Libellé court (cf. design/HMI-SPEC.md: "3 allumées") : la zone tRoom du
+     * .tft tronque au-delà d'une quinzaine de caractères. */
     int on = rooms_lights_on(), total = rooms_lights_total();
     if (total == 0) snprintf(buf, sizeof(buf), "aucune lumière");
     else if (on == 0) snprintf(buf, sizeof(buf), "toutes éteintes");
-    else snprintf(buf, sizeof(buf), "%d lumière%s allumée%s", on, on > 1 ? "s" : "", on > 1 ? "s" : "");
-    set_if_changed(HOME_LIGHTS, lights_cache, buf);
+    else snprintf(buf, sizeof(buf), "%d allumée%s", on, on > 1 ? "s" : "");
+    set_if_changed(HOME_LIGHTS, lights_cache, buf, force);
 }
 
 static void ui_task(void *arg)
