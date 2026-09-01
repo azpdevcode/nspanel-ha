@@ -4,6 +4,8 @@
 #include "tft_ota.h"
 #include "wifi.h"
 #include "app_config.h"
+#include "ha_ws.h"
+#include "rooms.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -119,8 +121,13 @@ static void boot_page_tick(void)
     if (wifi_is_connected()) {
         char ip[16];
         wifi_get_ip(ip, sizeof(ip));
-        snprintf(line, sizeof(line), "WiFi OK  %s\rHA: %s",
-                 ip, app_config_ha_set() ? app_config_ha_url() : "non configuré");
+        const char *ha;
+        if (!app_config_ha_set()) ha = "non configuré (voir portail)";
+        else if (ha_ws_is_ready()) ha = "connecté";
+        else if (ha_ws_auth_invalid()) ha = "token refusé";
+        else if (ha_ws_is_authed()) ha = "abonnement…";
+        else ha = "connexion…";
+        snprintf(line, sizeof(line), "WiFi OK  %s\rHA: %s", ip, ha);
     } else if (wifi_failed()) {
         snprintf(line, sizeof(line), "WiFi KO — configurez via\rle portail (voir écran suivant)");
     } else {
@@ -140,9 +147,11 @@ static void set_if_changed(nx_obj_t o, char cache[UI_CACHE_LEN], const char *val
     nx_set_txt(o, val);
 }
 
+/* Accord au singulier : "1 lumière allumée" plutôt que "1 lumières allumées". */
 static void home_page_tick(const struct tm *tm)
 {
     static char clock_cache[UI_CACHE_LEN], date_cache[UI_CACHE_LEN];
+    static char room_cache[UI_CACHE_LEN], lights_cache[UI_CACHE_LEN];
     char buf[UI_CACHE_LEN];
 
     snprintf(buf, sizeof(buf), "%02d:%02d", tm->tm_hour, tm->tm_min);
@@ -151,6 +160,18 @@ static void home_page_tick(const struct tm *tm)
     snprintf(buf, sizeof(buf), "%s %d %s",
              s_days[tm->tm_wday % 7], tm->tm_mday, s_months[tm->tm_mon % 12]);
     set_if_changed(HOME_DATE, date_cache, buf);
+
+    if (rooms_model_dirty()) ESP_LOGI(TAG, "modèle pièces à jour, rafraîchissement home");
+
+    int cur = rooms_current();
+    snprintf(buf, sizeof(buf), "%s", rooms_count() ? rooms_name(cur) : "—");
+    set_if_changed(HOME_ROOM, room_cache, buf);
+
+    int on = rooms_lights_on(), total = rooms_lights_total();
+    if (total == 0) snprintf(buf, sizeof(buf), "aucune lumière");
+    else if (on == 0) snprintf(buf, sizeof(buf), "toutes éteintes");
+    else snprintf(buf, sizeof(buf), "%d lumière%s allumée%s", on, on > 1 ? "s" : "", on > 1 ? "s" : "");
+    set_if_changed(HOME_LIGHTS, lights_cache, buf);
 }
 
 static void ui_task(void *arg)

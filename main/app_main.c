@@ -26,6 +26,10 @@
 #include "nextion.h"
 #include "ui.h"
 #include "app_diag.h"
+#include "settings.h"
+#include "ha_worker.h"
+#include "ha_ws.h"
+#include "rooms.h"
 
 static const char *TAG = "main";
 
@@ -101,6 +105,14 @@ void app_main(void)
      * répondre même si l'écran est absent. */
     TRY_INIT(ui_start(), "ui_start");
 
+    /* Chaîne HA : chacune de ces étapes doit rester non fatale — sans compte HA
+     * configuré, le panneau reste une horloge flashable (cf. plan de fork). */
+    settings_load();
+    TRY_INIT(ha_worker_start(), "ha_worker_start");
+    TRY_INIT(ha_ws_start(), "ha_ws_start");
+    rooms_start_fetch();
+    TRY_INIT(rooms_watchdog_start(), "rooms_watchdog_start");
+
     app_diag_start();
     app_diag_log_mem("init done");
 
@@ -112,10 +124,15 @@ void app_main(void)
         if (++tick % 3 == 0) {   /* ~6 s */
             char ip[16] = "-";
             wifi_get_ip(ip, sizeof(ip));
-            ESP_LOGI(TAG, "vivant | wifi=%s ip=%s | ha=%s | ecran=%s",
+            const char *ha_state = !app_config_ha_set() ? "non configure"
+                                  : ha_ws_is_ready()     ? "connecte"
+                                  : ha_ws_auth_invalid()  ? "token refuse"
+                                  : ha_ws_is_authed()     ? "abonnement..."
+                                  :                         "connexion...";
+            ESP_LOGI(TAG, "vivant | wifi=%s ip=%s | ha=%s (%d/%d pieces, %d/%d lumieres) | ecran=%s",
                      wifi_is_connected() ? "ok" : (wifi_failed() ? "ko" : "..."),
-                     ip,
-                     app_config_ha_set() ? "configure" : "absent",
+                     ip, ha_state,
+                     rooms_count(), ROOMS_MAX_ROOMS, rooms_lights_on(), rooms_lights_total(),
                      nx_page_present(NXP_BOOT) ? "tft ok" : "tft absent");
         }
         vTaskDelay(pdMS_TO_TICKS(2000));

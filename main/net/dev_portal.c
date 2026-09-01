@@ -7,6 +7,8 @@
 #include "wifi.h"
 #include "app_config.h"
 #include "nspanel_io.h"
+#include "ha_ws.h"
+#include "rooms.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -68,7 +70,28 @@ static esp_err_t get_status(httpd_req_t *req)
     if (connected && wifi_get_ip(ip, sizeof(ip))) cJSON_AddStringToObject(wifi, "ip", ip);
     else cJSON_AddNullToObject(wifi, "ip");
 
-    cJSON_AddBoolToObject(root, "ha_configured", app_config_ha_set());
+    cJSON *ha = cJSON_AddObjectToObject(root, "ha");
+    cJSON_AddBoolToObject(ha, "configured", app_config_ha_set());
+    cJSON_AddBoolToObject(ha, "ws_connected", ha_ws_is_authed());   /* auth_ok reçu */
+    cJSON_AddBoolToObject(ha, "ws_authed", ha_ws_is_ready());       /* authed + abonné */
+    cJSON_AddBoolToObject(ha, "auth_invalid", ha_ws_auth_invalid());
+    ha_ws_stats_t wst;
+    ha_ws_get_stats(&wst);
+    cJSON_AddNumberToObject(ha, "ws_events", (double)wst.events_received);
+    cJSON_AddNumberToObject(ha, "ws_truncated", (double)wst.frames_truncated);
+    cJSON_AddNumberToObject(ha, "ws_reconnects", (double)wst.reconnects);
+    cJSON_AddBoolToObject(ha, "rooms_fetching", rooms_fetching());
+    cJSON_AddNumberToObject(ha, "room_current", rooms_current());
+    cJSON_AddNumberToObject(ha, "lights_total", rooms_lights_total());
+    cJSON_AddNumberToObject(ha, "lights_on", rooms_lights_on());
+    cJSON *rooms = cJSON_AddArrayToObject(ha, "rooms");
+    for (int i = 0; i < rooms_count(); i++) {
+        cJSON *r = cJSON_CreateObject();
+        cJSON_AddStringToObject(r, "name", rooms_name(i));
+        cJSON_AddNumberToObject(r, "lights", rooms_light_count(i));
+        cJSON_AddStringToObject(r, "climate", rooms_climate_entity(i));
+        cJSON_AddItemToArray(rooms, r);
+    }
 
     cJSON *screen = cJSON_AddObjectToObject(root, "screen");
     cJSON_AddBoolToObject(screen, "gpio4_powered", nspanel_io_screen_powered());
@@ -325,6 +348,17 @@ static esp_err_t post_scan(httpd_req_t *req)
     return ESP_OK;
 }
 
+/* POST /rooms : force un nouveau fetch du modèle de pièces sans attendre le
+ * reboot ni la relance périodique (~30 min) — utile juste après avoir saisi le
+ * compte HA, ou après un changement d'aires côté HA. */
+static esp_err_t post_rooms(httpd_req_t *req)
+{
+    rooms_start_fetch();
+    httpd_resp_set_type(req, "text/plain");
+    httpd_resp_sendstr(req, "Rafraîchissement du modèle de pièces démarré — voir /status.");
+    return ESP_OK;
+}
+
 esp_err_t dev_portal_register(void)
 {
     httpd_handle_t h = config_portal_handle();
@@ -338,12 +372,14 @@ esp_err_t dev_portal_register(void)
     httpd_uri_t nx      = { .uri = "/nx",     .method = HTTP_POST, .handler = post_nx };
     httpd_uri_t scan    = { .uri = "/scan",   .method = HTTP_POST, .handler = post_scan };
     httpd_uri_t ota     = { .uri = "/ota",    .method = HTTP_POST, .handler = post_ota };
+    httpd_uri_t rooms   = { .uri = "/rooms",  .method = HTTP_POST, .handler = post_rooms };
     httpd_register_uri_handler(h, &bridge);
     httpd_register_uri_handler(h, &tft);
     httpd_register_uri_handler(h, &status);
     httpd_register_uri_handler(h, &nx);
     httpd_register_uri_handler(h, &scan);
     httpd_register_uri_handler(h, &ota);
-    ESP_LOGI(TAG, "routes de développement prêtes (/bridge, /tft, /ota, /status, /nx, /scan)");
+    httpd_register_uri_handler(h, &rooms);
+    ESP_LOGI(TAG, "routes de développement prêtes (/bridge, /tft, /ota, /status, /nx, /scan, /rooms)");
     return ESP_OK;
 }

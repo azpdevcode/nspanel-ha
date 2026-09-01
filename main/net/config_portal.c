@@ -183,6 +183,9 @@ static esp_err_t post_save(httpd_req_t *req)
     snprintf(body, P_BODY,
         "%s<h1>Enregistr&eacute; ✓</h1>"
         "<p class=s>Le panneau red&eacute;marre pour se connecter &agrave; %s.</p>"
+        "<p class=h>V&eacute;rifier ensuite <code>GET /status</code> &rarr; "
+        "<code>ha.ws_authed</code> doit passer &agrave; <code>true</code>, "
+        "puis <code>ha.rooms</code> se peuple en quelques secondes.</p>"
         "</div></body></html>", PAGE_HEAD, app_config_ha_url());
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_send(req, body, HTTPD_RESP_USE_STRLEN);
@@ -206,6 +209,15 @@ esp_err_t config_portal_start(void)
     /* Portail léger : peu de connexions simultanées → libère des sockets/fds
      * LWIP (le défaut 7 réserve quasi tout le pool) et de la RAM. */
     cfg.max_open_sockets = 3;
+    /* Défaut = 8 : /save (ce fichier) + les routes de dev_portal (bridge, tft,
+     * status, nx, scan, ota, rooms) + le catch-all racine dépassent ce compte.
+     * Un handler enregistré au-delà du max échoue SILENCIEUSEMENT côté appelant
+     * si l'erreur n'est pas vérifiée — c'est arrivé ici : l'ajout de /rooms a
+     * fait déborder le catch-all « / » (le dernier enregistré), laissant le
+     * portail répondre « nothing match the given url » sur la racine. Marge
+     * volontaire au-delà du compte actuel pour ne pas rejouer ce bug au
+     * prochain endpoint ajouté. */
+    cfg.max_uri_handlers = 16;
     /* Matcher wildcard : tout chemin GET (ex. http://<ip>/<token> tapé par
      * erreur dans la barre d'adresse) sert le formulaire au lieu d'un 404. */
     cfg.uri_match_fn = httpd_uri_match_wildcard;

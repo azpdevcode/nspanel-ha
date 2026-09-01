@@ -12,7 +12,12 @@ idf_component_register(
         "net/dev_portal.c"
         "ota/tft_ota.c"
         "ota/app_ota.c"
+        "ha/ha_client.c"
+        "ha/ha_ws.c"
         "ui/ui.c"
+        "ui/rooms.c"
+        "ui/settings.c"
+        "ui/ha_worker.c"
     INCLUDE_DIRS
         "."
         "bsp"
