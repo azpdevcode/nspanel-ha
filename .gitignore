@@ -11,3 +11,8 @@ dependencies.lock
 # Produit de compilation de Nextion Editor, régénéré à chaque build depuis le
 # .HMI — qui, lui, est versionné (seule source non régénérable du design).
 nextion/*.tft
+
+# Jeu d'images Nextion : régénéré par design/images/gen_images.py, dont les
+# sources (icons.py, gen_images.py) sont versionnées — même règle que le .tft.
+design/images/out/
+__pycache__/

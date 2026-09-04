@@ -7,10 +7,9 @@ modification ici doit se refléter dans ces deux fichiers (et réciproquement).
 ## Général
 
 - Écran : Nextion Discovery NX4832F035, résistif.
-- **Orientation : à trancher.** Cette spec a été écrite pour 320×480 *portrait* ;
-  le projet Editor actuel est en 480×320 *paysage* (résolution native de la
-  dalle). Les deux fonctionnent — mais toutes les positions des pages suivantes
-  en dépendent, donc à figer avant de dessiner `home`.
+- **Orientation : 480×320 paysage** — résolution native de la dalle, et ce que
+  le projet Editor utilise déjà. Figé : toutes les positions des pages ci-dessous
+  et toutes les tailles d'images (`design/PROMPT-IMAGES.md`) en dépendent.
 - **Reparse mode : rien à faire dans l'Editor.** Ce n'est pas une option de
   compilation mais un état d'exécution (`recmod`) activé par le programme du
   `.tft` chargé — celui d'origine Sonoff le réaffirme en continu. C'est le
@@ -42,11 +41,68 @@ modification ici doit se refléter dans ces deux fichiers (et réciproquement).
   de l'UTF-8. La conversion se fait dans `latin1_escape_into()` (`bsp/nextion.c`),
   sur le chemin de `nx_set_txt()` ; hors Latin-1 → `?`.
 - Icônes : pas de police d'icônes — glyphes Material exportés en PNG, ajoutés
-  en ressources Picture, affichés par `pic`/`picq`.
+  en ressources Picture, affichés par `pic`/`picq`. Le jeu complet (fonds de
+  page compris) est **généré** par `design/images/gen_images.py`, pas dessiné à
+  la main — voir « Ressources Picture » ci-dessous.
 - Palette RGB565 dérivée de `ui_common.h` du panneau P4 :
   fond `0x0841` (≈`COL_BG` 0x0d1117), lumières `0xF585` (`COL_LIGHTS`
   0xf5b133), chauffage `0xF337` (`COL_HEAT` 0xf2683c), accueil `0x39F8`
   (`COL_HOME` 0x3b82f6).
+
+## Ressources Picture
+
+Générées par `python3 design/images/gen_images.py` (sortie `design/images/out/`,
+~55 Ko au total). PNG 24 bits **sans alpha** : la série Discovery ignore la
+transparence, chaque image est donc déjà aplatie sur son fond (`#0d1117` pour
+les pages, `#161c24` pour les icônes posées sur une carte).
+
+L'id d'une ressource **n'est pas un champ que l'on choisit** : c'est son rang
+dans la liste Picture de l'Editor, attribué à l'ajout. Les fichiers sont donc
+préfixés de leur id — **les ajouter dans l'ordre alphabétique, en bloc**. Les
+`NN_reserved.png` de 1×1 px sont des gardes : les supprimer décale tout ce qui
+suit et le firmware affiche la mauvaise image.
+
+| id | contenu | taille |
+|---|---|---|
+| 0–5 | un fond par page, dans l'ordre de `nx_pages.def` | 480×320 |
+| 6–9 | garde | 1×1 |
+| 10–18 | icône météo grand format (`pNow`, `pWx`) | 64×64 |
+| 19 | garde | 1×1 |
+| 20–28 | icône météo prévision (`pD0`..`pD3`) | 40×40 |
+| 29 | garde | 1×1 |
+| 30–55 | icônes d'interface, par paires inactive/active | 32×32 |
+| 56–64 | icône météo de `home.pWx` (aplatie sur la carte dégradée) | 64×64 |
+| 65–66 | ampoule de la section Lumières, éteinte/allumée | 64×64 |
+
+Les deux blocs météo suivent le **même ordre de conditions** — `sunny`,
+`clear-night`, `partlycloudy`, `cloudy`, `rainy`, `snowy`, `lightning`,
+`windy`, `fog` — pour que le firmware calcule `base + index` (`10 + i` en grand
+format, `20 + i` en prévision) ; `fog` sert de repli pour `exceptional` et
+l'inconnu. Le mapping condition → index est celui de `weather_icon()` du
+panneau P4.
+
+**Coût réel dans le `.tft` : à mesurer.** Les ~590 Ko de PNG ne préjugent de
+rien — Nextion stocke une Picture en RGB565 brut, soit ~307 Ko par fond plein
+écran, donc potentiellement ~1,8 Mo pour les six et ~3 min par upload à
+11 Ko/s. Vérifier sur le panneau Output de l'Editor après avoir ajouté
+`01_bg_home.png` seul. Si le chiffre se confirme, ne garder en Picture que les
+deux zones réellement dégradées (carte météo de `home`, page `weather`) et
+dessiner les parties plates avec des `fill`/`line` dans l'Preinitialize Event
+de chaque page — coût nul en ressources.
+
+Faute de canal alpha, une icône posée sur un dégradé est aplatie sur le
+**morceau exact de fond qu'elle recouvre** : elle est liée à sa position.
+Déplacer `pWx` (`26,232` sur `home`), `pNow` (`24,54`) ou la bande des `pD*`
+(`y=236`) dans l'Editor oblige à corriger `SLOT_*` dans `gen_images.py` et à
+régénérer, sinon un rectangle plus clair apparaît autour du glyphe.
+
+Contrôle après upload — la seule preuve que l'allocation tient :
+```
+curl -X POST --data-urlencode "cmd=home.pWx.pic=14" http://<panneau>/nx   # pluie
+curl -X POST --data-urlencode "cmd=get home.pWx.pic" http://<panneau>/nx  # → 14
+```
+Si l'icône affichée n'est pas la bonne, une ressource a été ajoutée hors ordre :
+réimporter le bloc, ne pas compenser côté firmware.
 
 ## Variable de révision — `vSpec`
 
