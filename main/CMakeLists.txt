@@ -16,6 +16,7 @@ idf_component_register(
         "ha/ha_ws.c"
         "ha/ha_mqtt.c"
         "ui/ui.c"
+        "ui/nx_draw.c"
         "ui/rooms.c"
         "ui/settings.c"
         "ui/ha_worker.c"

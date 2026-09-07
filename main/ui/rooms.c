@@ -20,7 +20,14 @@
 static const char *TAG = "rooms";
 
 typedef struct { char name[48]; char entity[80]; } rlight_t;
-typedef struct { char name[48]; rlight_t lights[ROOMS_MAX_LIGHTS]; int count; char climate[80]; } droom_t;
+typedef struct {
+    char     name[48];
+    rlight_t lights[ROOMS_MAX_LIGHTS];
+    int      count;
+    char     climate[80];
+    float    cur_temp, set_temp;   /* dernier état climate connu */
+    bool     clim_ok;              /* false tant qu'aucun état n'est arrivé, ou "unavailable" */
+} droom_t;
 /* Cache plat de toutes les lumières connues (compteur d'accueil + subs worker). */
 typedef struct { int room; char entity[80]; bool is_on; } glight_t;
 
@@ -82,6 +89,10 @@ static void apply_rooms_json(const char *json)
         s_rooms[rc].climate[0] = 0;
         if (cJSON_IsString(clim) && clim->valuestring[0])
             strncpy(s_rooms[rc].climate, clim->valuestring, sizeof(s_rooms[rc].climate) - 1);
+        /* Repart de zéro à chaque fetch : une entité climate qui change d'aire
+         * ne doit pas hériter de la dernière valeur de l'ancienne. */
+        s_rooms[rc].clim_ok = false;
+        s_rooms[rc].cur_temp = s_rooms[rc].set_temp = 0;
         int lc = 0;
         cJSON *l;
         cJSON_ArrayForEach(l, lights) {
@@ -113,10 +124,15 @@ static void apply_rooms_json(const char *json)
     build_glights();
     s_dirty = true;
 
-    /* Réabonne le worker sur la liste à jour des lumières (WS + poll de secours). */
-    const char *ids[16];
-    for (int i = 0; i < s_glight_count; i++) ids[i] = s_glights[i].entity;
-    ha_worker_set_tracked(ids, s_glight_count);
+    /* Réabonne le worker sur la liste à jour : lumières + une entité climate
+     * par pièce qui en a une (WS + poll de secours), même répertoire pour les
+     * deux (routage par préfixe dans ha_worker.c). */
+    const char *ids[16 + ROOMS_MAX_ROOMS];
+    int nid = 0;
+    for (int i = 0; i < s_glight_count; i++) ids[nid++] = s_glights[i].entity;
+    for (int r = 0; r < s_room_count; r++)
+        if (s_rooms[r].climate[0]) ids[nid++] = s_rooms[r].climate;
+    ha_worker_set_tracked(ids, nid);
 
     ESP_LOGI(TAG, "modèle pièces: %d pièce(s), %d lumière(s)", s_room_count, s_glight_count);
 }
@@ -132,6 +148,24 @@ static void on_light_state(const char *entity_id, bool on, void *user)
             }
             break;
         }
+    }
+}
+
+/* "unavailable" (thermostat éteint/hors ligne) = pas de valeur affichable,
+ * distinct de "pas encore su" seulement dans l'intention : les deux se
+ * traduisent par clim_ok = false, qui fait retomber home sur "--" (ui.c). */
+static void on_climate_state(const char *entity_id, const ha_climate_state_t *st, void *user)
+{
+    (void)user;
+    for (int r = 0; r < s_room_count; r++) {
+        if (strcmp(s_rooms[r].climate, entity_id) != 0) continue;
+        bool ok = st->ok && strcmp(st->state, "unavailable") != 0;
+        s_rooms[r].clim_ok = ok;
+        if (ok) {
+            s_rooms[r].cur_temp = st->current_temp;
+            s_rooms[r].set_temp = st->target_temp;
+        }
+        break;
     }
 }
 
@@ -185,6 +219,18 @@ const char *rooms_climate_entity(int i)
     return (i >= 0 && i < s_room_count) ? s_rooms[i].climate : "";
 }
 
+void rooms_climate_state(int i, float *cur_temp, float *set_temp, bool *ok)
+{
+    if (i < 0 || i >= s_room_count || !s_rooms[i].clim_ok) {
+        *cur_temp = *set_temp = 0;
+        *ok = false;
+        return;
+    }
+    *cur_temp = s_rooms[i].cur_temp;
+    *set_temp = s_rooms[i].set_temp;
+    *ok = true;
+}
+
 int rooms_current(void) { return s_room_current; }
 
 void rooms_set_current(int i)
@@ -222,6 +268,7 @@ static void rooms_watchdog_task(void *arg)
     int  ticks = 0;
 
     ha_worker_set_light_cb(on_light_state, NULL);
+    ha_worker_set_climate_cb(on_climate_state, NULL);
 
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(ROOMS_TICK_MS));

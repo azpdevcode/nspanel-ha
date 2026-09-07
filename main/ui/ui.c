@@ -1,5 +1,6 @@
 #include "ui.h"
 #include "nextion.h"
+#include "nx_draw.h"
 #include "app_ota.h"
 #include "tft_ota.h"
 #include "wifi.h"
@@ -7,6 +8,7 @@
 #include "ha_ws.h"
 #include "rooms.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -52,10 +54,17 @@ static uint32_t s_last_touch_s;
  * redémarrage. */
 #define UI_HOME_TIMEOUT_S 30
 
+/* Un dessin (nx_draw_arc) s'applique à la page affichée et ne survit ni à un
+ * changement de page ni à un cycle veille/réveil : ce drapeau fait repeindre
+ * les anneaux de home au prochain tick qui la trouve affichée, sans jamais
+ * dessiner « en aveugle » sur une autre page. */
+static volatile bool s_home_needs_repaint;
+
 static bool goto_page(nx_page_t p)
 {
     if (!nx_page(p)) return false;   /* page absente du .tft : no-op silencieux */
     s_page = p;
+    if (p == NXP_HOME) s_home_needs_repaint = true;
     ESP_LOGI(TAG, "page -> %d", (int)p);
     return true;
 }
@@ -93,6 +102,13 @@ static void drain_touches(void)
          * dans le .tft ne permet de le savoir à l'avance. */
         if (!t.pressed) continue;
         s_last_touch_s = (uint32_t)(esp_timer_get_time() / 1000000);
+
+        /* Réveil (0x87) : pas de navigation à faire, mais un dessin en cours
+         * pendant la veille n'a pas survécu — le forcer si home est affichée. */
+        if (t.page == NX_WAKE_PAGE && t.cid == NX_WAKE_CID) {
+            if (s_page == NXP_HOME) s_home_needs_repaint = true;
+            continue;
+        }
 
         for (size_t i = 0; i < sizeof(s_nav) / sizeof(s_nav[0]); i++) {
             if (s_nav[i].from == s_page && s_nav[i].cid == t.cid) {
@@ -176,16 +192,76 @@ static void home_page_placeholders_once(void)
     static bool done;
     if (done) return;
     done = true;
-    nx_set_txt(HOME_TEMP, "--");
-    nx_set_txt(HOME_SET, "--");
     nx_set_txt(HOME_WX_TEMP, "--");
     nx_set_txt(HOME_WX_COND, "--");
+}
+
+/* ---- Anneaux de chauffage (page home) ----
+ *
+ * Nextion n'a pas de primitive d'arc : nx_draw_arc() les rend en chapelet de
+ * disques (nx_draw.c). Plage et disposition calquées sur la jauge du panneau
+ * P4 (ha-panel/main/ui/page_accueil.c:565-578) : 0..50 °C sur 270°, anneau
+ * extérieur = mesure, anneau intérieur = consigne. Géométrie et couleurs
+ * doivent rester en phase avec design/EDITOR-HOME.md (tuile Chauffage). */
+#define HOME_ARC_CX      360
+#define HOME_ARC_CY      130
+#define HOME_ARC_R_OUT    52
+#define HOME_ARC_TH_OUT    9
+#define HOME_ARC_R_IN     34
+#define HOME_ARC_TH_IN     7
+#define HOME_ARC_A_START 135
+#define HOME_ARC_A_SWEEP 270
+#define HOME_ARC_TMAX      50.0f
+
+/* Couleurs RGB565, arrondies depuis ui_common.h du panneau P4 (voir
+ * design/HMI-SPEC.md « Palette ») — pas de source unique côté firmware,
+ * resynchroniser à la main si la palette bouge : COL_HEAT_SOFT #f6a17b,
+ * COL_HEAT #ee6939, COL_CARD2 #182031. */
+#define COL_HEAT_SOFT_565 62735
+#define COL_HEAT_565      60231
+#define COL_CARD2_565       6406
+
+static int home_arc_end_angle(float temp)
+{
+    if (temp < 0) temp = 0;
+    if (temp > HOME_ARC_TMAX) temp = HOME_ARC_TMAX;
+    return HOME_ARC_A_START + (int)lroundf(temp / HOME_ARC_TMAX * HOME_ARC_A_SWEEP);
+}
+
+/* Repeint les deux anneaux en entier (piste + indicateur) : appelé seulement
+ * quand une valeur a changé ou que la page vient d'apparaître (repaint entrée
+ * de page / réveil, voir s_home_needs_repaint), jamais à chaque tick — c'est
+ * une rafale de ~120 commandes UART, pas un rafraîchissement de texte. */
+static void home_arcs_paint(bool ok, float cur, float set)
+{
+    /* Débit non négocié mais découvert (nextion_scan_baud()) : à un débit
+     * bas, la rafale bloquerait la tâche ui plusieurs secondes (voir
+     * design/EDITOR-HOME.md) — dans ce cas, laisser les seuls textes. */
+    if (nextion_current_baud() < 57600) return;
+
+    nx_draw_arc(HOME_ARC_CX, HOME_ARC_CY, HOME_ARC_R_OUT, HOME_ARC_TH_OUT,
+               HOME_ARC_A_START, HOME_ARC_A_START + HOME_ARC_A_SWEEP, COL_CARD2_565);
+    nx_draw_arc(HOME_ARC_CX, HOME_ARC_CY, HOME_ARC_R_IN, HOME_ARC_TH_IN,
+               HOME_ARC_A_START, HOME_ARC_A_START + HOME_ARC_A_SWEEP, COL_CARD2_565);
+    if (!ok) return;
+
+    int end_cur = home_arc_end_angle(cur), end_set = home_arc_end_angle(set);
+    if (end_cur > HOME_ARC_A_START)
+        nx_draw_arc(HOME_ARC_CX, HOME_ARC_CY, HOME_ARC_R_OUT, HOME_ARC_TH_OUT,
+                   HOME_ARC_A_START, end_cur, COL_HEAT_SOFT_565);
+    if (end_set > HOME_ARC_A_START)
+        nx_draw_arc(HOME_ARC_CX, HOME_ARC_CY, HOME_ARC_R_IN, HOME_ARC_TH_IN,
+                   HOME_ARC_A_START, end_set, COL_HEAT_565);
 }
 
 static void home_page_tick(const struct tm *tm)
 {
     static char clock_cache[UI_CACHE_LEN], date_cache[UI_CACHE_LEN];
     static char room_cache[UI_CACHE_LEN], lights_cache[UI_CACHE_LEN];
+    static char temp_cache[UI_CACHE_LEN], set_cache[UI_CACHE_LEN];
+    static int  light_pic_cache = -1;
+    static float prev_cur = -1.0f, prev_set = -1.0f;
+    static bool  prev_ok;
     char buf[UI_CACHE_LEN];
     bool force = resync_due();
 
@@ -202,8 +278,8 @@ static void home_page_tick(const struct tm *tm)
 
     /* "pièce ?" (ASCII) plutôt qu'un tiret cadratin : hors Latin-1, il serait
      * de toute façon rendu '?' par latin1_escape_into (nextion.c). */
-    int cur = rooms_current();
-    snprintf(buf, sizeof(buf), "%s", rooms_count() ? rooms_name(cur) : "pièce ?");
+    int room = rooms_current();
+    snprintf(buf, sizeof(buf), "%s", rooms_count() ? rooms_name(room) : "pièce ?");
     set_if_changed(HOME_ROOM, room_cache, buf, force);
 
     /* Libellé court (cf. design/HMI-SPEC.md: "3 allumées") : la zone tRoom du
@@ -213,6 +289,37 @@ static void home_page_tick(const struct tm *tm)
     else if (on == 0) snprintf(buf, sizeof(buf), "toutes éteintes");
     else snprintf(buf, sizeof(buf), "%d allumée%s", on, on > 1 ? "s" : "");
     set_if_changed(HOME_LIGHTS, lights_cache, buf, force);
+
+    /* Ampoule de la tuile Lumières (65 = éteinte, 66 = allumée, cf.
+     * design/images/gen_images.py) : deux images seulement, pas de cache texte. */
+    int light_pic = on ? 66 : 65;
+    if (light_pic != light_pic_cache || force) {
+        nx_set_val(HOME_LIGHT_PIC, light_pic);
+        light_pic_cache = light_pic;
+    }
+
+    /* Chauffage : entité climate de la pièce affichée (rooms.c). */
+    float cur, set_t;
+    bool ok;
+    rooms_climate_state(room, &cur, &set_t, &ok);
+
+    if (ok) snprintf(buf, sizeof(buf), "%.1f°", cur);
+    else    snprintf(buf, sizeof(buf), "--");
+    set_if_changed(HOME_TEMP, temp_cache, buf, force);
+
+    if (ok) snprintf(buf, sizeof(buf), "%.0f°", set_t);
+    else    snprintf(buf, sizeof(buf), "--");
+    set_if_changed(HOME_SET, set_cache, buf, force);
+
+    /* Anneaux : repeints seulement sur changement de valeur ou entrée/réveil
+     * de page (s_home_needs_repaint) — jamais à chaque tick, cf. home_arcs_paint(). */
+    bool changed = ok != prev_ok ||
+                   (ok && (fabsf(cur - prev_cur) > 0.05f || fabsf(set_t - prev_set) > 0.05f));
+    if (changed || s_home_needs_repaint) {
+        home_arcs_paint(ok, cur, set_t);
+        prev_cur = cur; prev_set = set_t; prev_ok = ok;
+        s_home_needs_repaint = false;
+    }
 }
 
 static void ui_task(void *arg)

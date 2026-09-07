@@ -37,6 +37,11 @@ int rooms_light_count(int i);
 /** Entité climate.* de la pièce `i` (chaîne vide si aucune). */
 const char *rooms_climate_entity(int i);
 
+/** Dernier état climate connu de la pièce `i` (poll de secours ou push WS).
+ *  `*ok` est false tant qu'aucun état n'est arrivé, ou si l'entité HA est
+ *  `unavailable` — distingue « pas encore su » de « 0 °C ». */
+void rooms_climate_state(int i, float *cur_temp, float *set_temp, bool *ok);
+
 /** Pièce actuellement affichée par l'écran lumières (0 par défaut). */
 int  rooms_current(void);
 void rooms_set_current(int i);

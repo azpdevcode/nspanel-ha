@@ -1,7 +1,8 @@
 /*
  * Worker HA — allégé de ha-panel/main/ui/ha_worker.c (720 l. → ce fichier).
- * Une task : poll de secours des lumières suivies + traitement des commandes
- * (toggle/set/luminosité) + dispatch des push WebSocket. Jamais d'accès UART.
+ * Une task : poll de secours des lumières et entités climate suivies (routage
+ * par préfixe d'entity_id) + traitement des commandes (toggle/set/luminosité)
+ * + dispatch des push WebSocket. Jamais d'accès UART.
  */
 #include "ha_worker.h"
 
@@ -19,7 +20,8 @@
 #include "wifi.h"
 #include "ha_client.h"
 
-#define HA_WORKER_MAX_SUBS 16
+/* 8 pièces (ROOMS_MAX_ROOMS) x 1 climate + 16 lumières (s_glights). */
+#define HA_WORKER_MAX_SUBS 24
 #define HA_ENTITY_MAXLEN   80
 
 static const char *TAG = "ha_worker";
@@ -33,6 +35,13 @@ static esp_timer_handle_t s_settle_timer;   /* re-sonde différée après une co
 
 static ha_light_state_cb_t s_light_cb;
 static void                *s_light_user;
+static ha_climate_state_cb_t s_climate_cb;
+static void                  *s_climate_user;
+
+static bool is_climate(const char *entity_id)
+{
+    return strncmp(entity_id, "climate.", 8) == 0;
+}
 
 /* kind : 0 = action lumière (toggle/turn_on/turn_off), 7 = event poussé (WS),
  *        8 = sync immédiate, 12 = luminosité. */
@@ -75,6 +84,12 @@ void ha_worker_set_light_cb(ha_light_state_cb_t cb, void *user)
 {
     s_light_cb = cb;
     s_light_user = user;
+}
+
+void ha_worker_set_climate_cb(ha_climate_state_cb_t cb, void *user)
+{
+    s_climate_cb = cb;
+    s_climate_user = user;
 }
 
 void ha_worker_pause_poll(bool pause) { s_poll_paused = pause; }
@@ -135,9 +150,16 @@ static void ws_dispatch(const char *entity, const char *json)
 {
     cJSON *root = cJSON_Parse(json);
     if (!root) return;
-    ha_light_state_t ls;
-    if (ha_parse_light(root, &ls) == ESP_OK && s_light_cb) {
-        s_light_cb(entity, ls.on, s_light_user);
+    if (is_climate(entity)) {
+        ha_climate_state_t cs;
+        if (ha_parse_climate_state(root, &cs) == ESP_OK && s_climate_cb) {
+            s_climate_cb(entity, &cs, s_climate_user);
+        }
+    } else {
+        ha_light_state_t ls;
+        if (ha_parse_light(root, &ls) == ESP_OK && s_light_cb) {
+            s_light_cb(entity, ls.on, s_light_user);
+        }
     }
     cJSON_Delete(root);
 }
@@ -190,9 +212,16 @@ static void ha_worker_task(void *arg)
         xSemaphoreGive(s_subs_mtx);
 
         for (int i = 0; i < n; i++) {
-            ha_light_state_t ls;
-            if (ha_get_light(local[i], &ls) == ESP_OK && s_light_cb) {
-                s_light_cb(local[i], ls.on, s_light_user);
+            if (is_climate(local[i])) {
+                ha_climate_state_t cs;
+                if (ha_get_climate_state(local[i], &cs) == ESP_OK && s_climate_cb) {
+                    s_climate_cb(local[i], &cs, s_climate_user);
+                }
+            } else {
+                ha_light_state_t ls;
+                if (ha_get_light(local[i], &ls) == ESP_OK && s_light_cb) {
+                    s_light_cb(local[i], ls.on, s_light_user);
+                }
             }
         }
     }

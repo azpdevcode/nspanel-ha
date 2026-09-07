@@ -25,6 +25,7 @@ NX_OBJ(HOME_SET,        NXP_HOME,    "tSet",   "txt")
 NX_OBJ(HOME_WX_PIC,     NXP_HOME,    "pWx",    "pic")
 NX_OBJ(HOME_WX_TEMP,    NXP_HOME,    "tWxT",   "txt")
 NX_OBJ(HOME_WX_COND,    NXP_HOME,    "tWxC",   "txt")
+NX_OBJ(HOME_LIGHT_PIC,  NXP_HOME,    "pLight", "pic")
 
 /* --- lights (ancre : tRoom) --- */
 NX_OBJ(LIGHTS_ROOM,     NXP_LIGHTS,  "tRoom",  "txt")

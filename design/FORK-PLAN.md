@@ -385,8 +385,15 @@ ton rythme, sans jamais casser un panneau qui tourne.
    téléverser un HMI que tu viens de dessiner et le voir à l'écran.
 2. **Cœur HA + Lumières.** `rooms.c`, `settings.c`, `ui_worker.c`, `ha_client` allégé,
    `ha_ws`, page `lights` avec sliders et pushes WS, `home` minimal (horloge, date, pièce).
-3. **Chauffage + Météo.** Pages `climate` et `weather` ; `ha_weather.c` repris tel quel.
-4. **Accueil complet + Paramètres.** Tuiles agrégées de `home`, page `cfg`, relais/boutons/NTC
+3. **Chauffage + Météo.** ~~Pages `climate` et `weather`~~ ; `ha_weather.c` repris tel quel.
+   Le bloc chauffage de cette phase est fait, mais côté `home` seulement, pas la page
+   `climate` dédiée : `ha_worker.c`/`rooms.c` suivent l'entité `climate.*` de chaque
+   pièce (poll + push WS), et `home_page_tick()` alimente `tTemp`/`tSet` et les deux
+   anneaux dynamiques (`main/ui/nx_draw.c`) de la tuile Chauffage. La page `climate`
+   (boutons ±, préréglages) reste à faire. Météo (`ha_weather.c`, page `weather`, `pWx`
+   de `home`) reste entièrement à faire.
+4. **Accueil complet + Paramètres.** Tuiles Lumières/Chauffage de `home` faites (voir
+   phase 3 ci-dessus et `design/EDITOR-HOME.md`) ; page `cfg`, relais/boutons/NTC
    exposés par MQTT discovery (`ha/ha_mqtt.c`), veille `thsp`/`dim`.
 5. **OTA applicatif.** `ota_manager` + `scripts/release.sh` adapté. (Le TFT-OTA est déjà là
    depuis la phase 1.)

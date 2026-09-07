@@ -77,11 +77,6 @@ static void rx_resume(void)
     s_rx_paused = false;
 }
 
-/* Réveil tactile pendant le sommeil écran (0x87) : événement synthétique posté
- * sur la file tactile pour que ui_worker sorte de veille et rafraîchisse. */
-#define NX_WAKE_PAGE 0xFFu
-#define NX_WAKE_CID  0xFFu
-
 /* ---- Bas niveau UART ---- */
 
 /* ---- Verrou du bus écran ----

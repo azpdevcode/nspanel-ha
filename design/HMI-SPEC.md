@@ -76,7 +76,7 @@ suit et le firmware affiche la mauvaise image.
 | 29 | garde | 1×1 |
 | 30–55 | icônes d'interface, par paires inactive/active | 32×32 |
 | 56–64 | icône météo de `home.pWx` (aplatie sur la carte dégradée) | 64×64 |
-| 65–66 | ampoule de la section Lumières, éteinte/allumée | 64×64 |
+| 65–66 | ampoule de la tuile Lumières (`pLight`), éteinte/allumée — aplatie sur `COL_CARD` | 64×64 |
 
 Les deux blocs météo suivent le **même ordre de conditions** — `sunny`,
 `clear-night`, `partlycloudy`, `cloudy`, `rainy`, `snowy`, `lightning`,
@@ -155,14 +155,20 @@ partiel » dans le plan de fork) — l'ordre réel n'a pas d'importance.
 |---|---|---|
 | `tClock` | Text (f2) | heure |
 | `tDate` | Text (f0) | date |
+| `pLight` | Picture | ampoule de la tuile Lumières (65 éteinte / 66 allumée) |
 | `tRoom` | Text | pièce par défaut |
 | `tLights` | Text | ex. « 3 allumées » |
-| `tTemp` | Text (f1) | température courante (chauffage pièce) |
-| `tSet` | Text | consigne |
+| `tTemp` | Text (f1) | température mesurée (entité `climate.*` de la pièce) |
+| `tSet` | Text | consigne (idem) |
 | `pWx` | Picture | icône météo courante |
 | `tWxT` | Text | température météo |
 | `tWxC` | Text | condition météo (libellé court) |
 | `mLight`, `mHeat`, `mWx`, `mCfg` | Hotspot | navigation (non sondés — absence silencieuse) |
+
+Les deux anneaux de la tuile Chauffage **ne sont pas des objets Nextion** : ils
+sont dessinés dynamiquement par le firmware en chapelet de disques (`cirs`,
+`main/ui/nx_draw.c`), rien à déclarer ici ni dans l'Editor — voir
+`design/EDITOR-HOME.md` pour la géométrie et les couleurs.
 
 ### `lights` (page 2)
 

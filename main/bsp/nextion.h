@@ -42,6 +42,13 @@ typedef struct {
     uint8_t pressed;  /* 1 = appui, 0 = relâchement */
 } nx_touch_t;
 
+/* Réveil tactile pendant le sommeil écran (retour 0x87, sans page/cid réels) :
+ * événement synthétique posté sur la file tactile avec ce couple page/cid, pour
+ * que la tâche ui sorte de veille et rafraîchisse (ex. redessiner les anneaux
+ * de home, qui ne survivent pas à un cycle veille/réveil). */
+#define NX_WAKE_PAGE 0xFFu
+#define NX_WAKE_CID  0xFFu
+
 /**
  * @brief Initialise l'UART vers l'écran, négocie le débit, sonde les objets.
  *

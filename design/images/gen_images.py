@@ -275,16 +275,19 @@ def bg_boot():
 
 def bg_home():
     img, d = new_bg()
-    # En-têtes de section : icône + libellé de la couleur du domaine (P4).
-    stamp(img, (12, 8), "light", 22, LIGHTS)
-    label(d, (40, 19), "Lumières", LIGHTS, 15, "lm")
-    stamp(img, (240, 8), "heat", 22, HEAT)
-    label(d, (268, 19), "Chauffage", HEAT, 15, "lm")
-    stamp(img, (444, 8), "cfg", 22, FAINT)        # mCfg
-    # Chauffage : anneau clair = température actuelle, arc court = consigne.
-    d.arc((292, 50, 416, 174), start=135, end=405, fill=HEAT_SOFT, width=9)
-    d.arc((304, 62, 404, 162), start=135, end=205, fill=HEAT, width=7)
-    # Météo : seule carte de la page, en dégradé bleu.
+    stamp(img, (444, 12), "cfg", 22, FAINT)       # mCfg
+    # Tuile Lumières — carte + en-tête gravés ; pLight (bilan on/off, 65/66)
+    # et les valeurs (tRoom, tLights) sont des objets Nextion posés dessus.
+    card(d, (8, 52, 232, 190), CARD, r=12)
+    stamp(img, (16, 60), "light", 20, LIGHTS)
+    label(d, (42, 70), "Lumières", LIGHTS, 14, "lm")
+    # Tuile Chauffage — carte + en-tête gravés ; les anneaux sont dessinés à
+    # l'exécution par le firmware (nx_draw_arc, main/ui/ui.c), pas ici : ils
+    # portent une valeur. Ne rien poser au centre (voir design/EDITOR-HOME.md).
+    card(d, (248, 52, 472, 190), CARD, r=12)
+    stamp(img, (256, 60), "heat", 20, HEAT)
+    label(d, (282, 70), "Chauffage", HEAT, 14, "lm")
+    # Météo : seule carte en dégradé de la page.
     sky(img, (8, 196, 472, 314))
     stamp(img, (20, 206), "weather", 20, TXT)
     label(d, (46, 216), "Météo", TXT, 15, "lm")
@@ -415,8 +418,10 @@ def main(outdir):
              % (c, SLOT_HOME_WX))
 
     for suffix, col in (("off", DIM), ("on", LIGHTS)):          # 65–66
-        emit(icon_on(BG, "light", 64, col), "home_light64_" + suffix, "home",
-             "(Picture d'état)", "ampoule de la section Lumières, %s" % suffix)
+        # Aplatie sur CARD, pas BG : pLight est posée sur la tuile Lumières
+        # (fond de tuile), pas sur le noir de page.
+        emit(icon_on(CARD, "light", 64, col), "home_light64_" + suffix, "home",
+             "pLight", "ampoule de la tuile Lumières, %s" % suffix)
 
     with open(os.path.join(outdir, "manifest.csv"), "w", newline="",
               encoding="utf-8") as f:
