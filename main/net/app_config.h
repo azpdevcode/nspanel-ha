@@ -27,6 +27,9 @@ extern "C" {
 #define APP_CFG_PASS_MAX   65    /* 64 + NUL (limite WPA2) */
 #define APP_CFG_URL_MAX    128
 #define APP_CFG_TOKEN_MAX  600   /* JWT longue durée ~180 c., large marge */
+#define APP_CFG_MQTT_URI_MAX  128   /* ex. mqtt://192.168.1.10:1883 */
+#define APP_CFG_MQTT_USER_MAX 65
+#define APP_CFG_MQTT_PASS_MAX 65
 
 /** Charge la config depuis NVS dans le cache (repli Kconfig). À appeler une fois
  *  au boot, après nvs_flash_init() et avant wifi_start()/ha_*. */
@@ -37,16 +40,23 @@ const char *app_config_wifi_ssid(void);
 const char *app_config_wifi_pass(void);
 const char *app_config_ha_url(void);
 const char *app_config_ha_token(void);
+const char *app_config_mqtt_uri(void);
+const char *app_config_mqtt_user(void);
+const char *app_config_mqtt_pass(void);
 
 /** true si un SSID WiFi non vide est configuré. */
 bool app_config_wifi_set(void);
 /** true si une URL HA et un token non vides sont configurés. */
 bool app_config_ha_set(void);
+/** true si une URI de broker MQTT non vide est configurée (user/pass optionnels). */
+bool app_config_mqtt_set(void);
 
 /** Enregistre les identifiants WiFi (NVS + cache). */
 esp_err_t app_config_set_wifi(const char *ssid, const char *pass);
 /** Enregistre le compte HA (NVS + cache). */
 esp_err_t app_config_set_ha(const char *url, const char *token);
+/** Enregistre le broker MQTT (NVS + cache). user/pass peuvent être vides (broker anonyme). */
+esp_err_t app_config_set_mqtt(const char *uri, const char *user, const char *pass);
 
 #ifdef __cplusplus
 }

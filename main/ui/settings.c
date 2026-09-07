@@ -21,6 +21,7 @@ static int  s_brightness_pct = 80;
  * gênante autrement que par le portail web. À reconsidérer quand cfg existe. */
 static int  s_sleep_enabled  = 0;
 static int  s_sleep_timeout_sec = 60;
+static int  s_ntc_offset_tenths = -40;   /* -4.0 °C : repli raisonnable avant tout réglage */
 
 void settings_load(void)
 {
@@ -35,6 +36,7 @@ void settings_load(void)
     if (h && nvs_get_i32(h, "brightness", &v) == ESP_OK) s_brightness_pct = v;
     if (h && nvs_get_i32(h, "sleep_en", &v) == ESP_OK) s_sleep_enabled = v;
     if (h && nvs_get_i32(h, "sleep_sec", &v) == ESP_OK) s_sleep_timeout_sec = v;
+    if (h && nvs_get_i32(h, "ntc_off", &v) == ESP_OK) s_ntc_offset_tenths = v;
 
     if (h) nvs_close(h);
 
@@ -116,4 +118,13 @@ void settings_save_sleep_timeout(int sec)
         s_sleep_timeout_sec = sec;
         if (s_sleep_enabled) nx_cmd("thsp=%d", sec);
     }
+}
+
+int settings_ntc_offset_tenths(void) { return s_ntc_offset_tenths; }
+
+void settings_save_ntc_offset_tenths(int tenths)
+{
+    if (tenths < -200) tenths = -200;
+    if (tenths > 200) tenths = 200;
+    if (save_i32("ntc_off", tenths) == ESP_OK) s_ntc_offset_tenths = tenths;
 }

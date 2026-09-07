@@ -25,6 +25,12 @@ typedef void (*nspanel_relay_cb_t)(int idx, bool on);
  *  re-sondage complet de l'écran depuis l'appelant (voir nextion_force_reprobe). */
 typedef void (*nspanel_longpress_cb_t)(void);
 
+/** Appelé (hors ISR) à CHAQUE relâchement de bouton, indépendamment du fait
+ *  qu'il ait ou non basculé le relais (voir nspanel_io_set_button_detached).
+ *  idx : 0 ou 1. long_press : appui ≥3 s (bouton 1 uniquement, voir
+ *  nspanel_longpress_cb_t — les deux callbacks se déclenchent dans ce cas). */
+typedef void (*nspanel_button_cb_t)(int idx, bool long_press);
+
 /** Appelé toutes les ~30 s avec la température NTC en °C (NAN si lecture invalide). */
 typedef void (*nspanel_ntc_cb_t)(float celsius);
 
@@ -47,12 +53,19 @@ bool nspanel_io_boot_bridge_requested(void);
 
 void nspanel_io_set_relay_cb(nspanel_relay_cb_t cb);
 void nspanel_io_set_longpress_cb(nspanel_longpress_cb_t cb);
+void nspanel_io_set_button_cb(nspanel_button_cb_t cb);
 void nspanel_io_set_ntc_cb(nspanel_ntc_cb_t cb);
 
 bool nspanel_relay_get(int idx);
 /** Bascule programmatique (ex. écho d'un changement venu de HA) : ne ré-émet
  *  PAS le callback relais (évite une boucle avec ui_worker). */
 void nspanel_relay_set(int idx, bool on);
+
+/** true si le bouton `idx` est détaché de son relais : l'appui est toujours
+ *  remonté via nspanel_button_cb_t, mais ne bascule plus le GPIO relais.
+ *  Persisté en NVS, restauré par nspanel_io_init(). */
+bool nspanel_io_button_detached(int idx);
+void nspanel_io_set_button_detached(int idx, bool detached);
 
 /** Bip court (LEDC sur GPIO21), accusé de réception tactile. */
 void nspanel_buzzer_beep(uint32_t ms);

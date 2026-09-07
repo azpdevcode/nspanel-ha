@@ -31,9 +31,11 @@ static const int s_relay_gpio[NSPANEL_RELAY_COUNT]  = { GPIO_RELAY1, GPIO_RELAY2
 static const int s_button_gpio[NSPANEL_RELAY_COUNT] = { GPIO_BUTTON1, GPIO_BUTTON2 };
 
 static bool s_relay_state[NSPANEL_RELAY_COUNT];
+static bool s_button_detached[NSPANEL_RELAY_COUNT];
 
 static nspanel_relay_cb_t     s_relay_cb;
 static nspanel_longpress_cb_t s_longpress_cb;
+static nspanel_button_cb_t    s_button_cb;
 static nspanel_ntc_cb_t       s_ntc_cb;
 
 static float s_ntc_last_c = NAN;
@@ -69,6 +71,32 @@ void nspanel_relay_set(int idx, bool on)
     if (idx < 0 || idx >= NSPANEL_RELAY_COUNT) return;
     relay_apply(idx, on);
     relay_persist(idx, on);
+}
+
+/* ---- Détachement bouton/relais ---- */
+
+static void detach_persist(int idx, bool detached)
+{
+    nvs_handle_t h;
+    if (nvs_open(NX_NVS_NS, NVS_READWRITE, &h) != ESP_OK) return;
+    char key[16];
+    snprintf(key, sizeof(key), "dtch%d", idx);
+    nvs_set_u8(h, key, detached ? 1 : 0);
+    nvs_commit(h);
+    nvs_close(h);
+}
+
+bool nspanel_io_button_detached(int idx)
+{
+    if (idx < 0 || idx >= NSPANEL_RELAY_COUNT) return false;
+    return s_button_detached[idx];
+}
+
+void nspanel_io_set_button_detached(int idx, bool detached)
+{
+    if (idx < 0 || idx >= NSPANEL_RELAY_COUNT) return;
+    s_button_detached[idx] = detached;
+    detach_persist(idx, detached);
 }
 
 /* ---- Boutons : ISR légère -> file -> tâche (débounce + détection appui long) ---- */
@@ -118,12 +146,20 @@ static void io_task(void *arg)
         int64_t held_ms = (e.t_us - press_start[idx]) / 1000;
         press_start[idx] = 0;
 
-        if (idx == 0 && held_ms >= LONGPRESS_MS) {
+        bool long_press = held_ms >= LONGPRESS_MS;
+
+        if (idx == 0 && long_press) {
             ESP_LOGI(TAG, "bouton 1 : appui long (%lld ms) -> re-sondage écran",
                      (long long)held_ms);
             if (s_longpress_cb) s_longpress_cb();
-            continue;
         }
+
+        /* Remonté systématiquement, même détaché ou en appui long : c'est ce
+         * qui alimente l'entité HA `event.*` — le local-first ne concerne que
+         * le GPIO relais, pas la visibilité de l'appui côté HA. */
+        if (s_button_cb) s_button_cb(idx, long_press);
+
+        if (long_press || s_button_detached[idx]) continue;
 
         bool new_state = !s_relay_state[idx];
         relay_apply(idx, new_state);
@@ -135,6 +171,7 @@ static void io_task(void *arg)
 
 void nspanel_io_set_relay_cb(nspanel_relay_cb_t cb)         { s_relay_cb = cb; }
 void nspanel_io_set_longpress_cb(nspanel_longpress_cb_t cb) { s_longpress_cb = cb; }
+void nspanel_io_set_button_cb(nspanel_button_cb_t cb)       { s_button_cb = cb; }
 void nspanel_io_set_ntc_cb(nspanel_ntc_cb_t cb)             { s_ntc_cb = cb; }
 
 /* ---- Buzzer (LEDC) ---- */
@@ -238,6 +275,15 @@ esp_err_t nspanel_io_init(void)
             nvs_get_u8(h, key, &v);
         }
         relay_apply(i, v != 0);
+    }
+    for (int i = 0; i < NSPANEL_RELAY_COUNT; i++) {
+        uint8_t v = 0;
+        if (have_nvs) {
+            char key[16];
+            snprintf(key, sizeof(key), "dtch%d", i);
+            nvs_get_u8(h, key, &v);
+        }
+        s_button_detached[i] = (v != 0);
     }
     if (have_nvs) nvs_close(h);
 

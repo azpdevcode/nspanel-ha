@@ -8,6 +8,7 @@
 #include "app_config.h"
 #include "nspanel_io.h"
 #include "ha_ws.h"
+#include "ha_mqtt.h"
 #include "rooms.h"
 
 #include <string.h>
@@ -91,6 +92,23 @@ static esp_err_t get_status(httpd_req_t *req)
         cJSON_AddNumberToObject(r, "lights", rooms_light_count(i));
         cJSON_AddStringToObject(r, "climate", rooms_climate_entity(i));
         cJSON_AddItemToArray(rooms, r);
+    }
+
+    cJSON *mqtt = cJSON_AddObjectToObject(root, "mqtt");
+    cJSON_AddBoolToObject(mqtt, "configured", app_config_mqtt_set());
+    ha_mqtt_stats_t mst;
+    ha_mqtt_get_stats(&mst);
+    cJSON_AddBoolToObject(mqtt, "connected", mst.connected);
+    cJSON_AddNumberToObject(mqtt, "connects", (double)mst.connects);
+    cJSON_AddNumberToObject(mqtt, "disconnects", (double)mst.disconnects);
+    cJSON_AddNumberToObject(mqtt, "messages_published", (double)mst.messages_published);
+    cJSON_AddNumberToObject(mqtt, "commands_received", (double)mst.commands_received);
+    cJSON *relays = cJSON_AddArrayToObject(mqtt, "relays");
+    for (int i = 0; i < NSPANEL_RELAY_COUNT; i++) {
+        cJSON *r = cJSON_CreateObject();
+        cJSON_AddBoolToObject(r, "on", nspanel_relay_get(i));
+        cJSON_AddBoolToObject(r, "button_detached", nspanel_io_button_detached(i));
+        cJSON_AddItemToArray(relays, r);
     }
 
     cJSON *screen = cJSON_AddObjectToObject(root, "screen");

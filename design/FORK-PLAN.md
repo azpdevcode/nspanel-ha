@@ -62,8 +62,9 @@ leurs propres fichiers :
   intenable sur ~290 Ko de DRAM.
 - **lignes 184-441 → `ui/settings.c/h`** : `settings_load` + les `settings_save_*`. Clés
   conservées : `def_room`, `brightness`, `sleep_en`, `sleep_sec`. Clés supprimées : `volume`,
-  `ww_cutoff`, `night_*`, `ss_anim`. Clés ajoutées : `rly1_ent`, `rly2_ent` (entités HA
-  miroir des relais), `tft_url`.
+  `ww_cutoff`, `night_*`, `ss_anim`. Clé ajoutée : `ntc_off` (offset sonde température, voir
+  section « Relais, boutons, sonde » — les relais/boutons finissent par MQTT discovery, pas
+  par des entités miroir, donc pas de clé `rly*_ent`), `tft_url`.
 - **`ui/ha_worker.c` (698 l.) → `ui/ui_worker.c`** : garder le bloc lumières + le bloc
   climate + `post_state_event` / `pause_poll` ; supprimer tout le bloc média/pochette.
   La pile est créée par `xTaskCreateWithCaps` en PSRAM → repasser en `xTaskCreate` interne.
@@ -73,7 +74,8 @@ Garder : plomberie HTTP (`ha_http_request`, `ha_http_get_json`), lumières
 (`ha_parse_light_state`, `ha_get_light`, `ha_light_toggle`, `ha_light_set_brightness`),
 climate (`ha_parse_climate_state`, `ha_get_climate_state`, `ha_climate_set_temp/preset`),
 `ha_render_template`, `ha_get_weather_pressure`, `ha_script_run`/`ha_scene_activate`.
-Ajouter `ha_set_state(entity, state, attrs_json)` pour publier la sonde NTC.
+(La sonde NTC, les relais et les boutons ne passent PAS par `ha_client` : voir
+`ha/ha_mqtt.c`, section « Relais, boutons, sonde ».)
 Supprimer : média + Music Assistant, `ha_get_logbook` (**buffer de 256 Ko, impossible ici**),
 calendriers, pochettes (décodeur JPEG matériel P4), caméras MJPEG, timers, notifications.
 
@@ -294,21 +296,32 @@ d'objets valide.
 
 ---
 
-## Relais, boutons, sonde — `bsp/nspanel_io.c/h`
+## Relais, boutons, sonde — `bsp/nspanel_io.c/h` + `ha/ha_mqtt.c/h`
 
-Comportement **local d'abord** :
+Comportement **local d'abord**, exposition côté HA par **MQTT discovery** (pas de miroir
+`input_boolean` : le broker Mosquitto + la découverte HA sont déjà actifs sur l'installation
+cible, ce qui donne de vraies entités du registre plutôt qu'un helper à créer à la main) :
 
 1. Appui sur GPIO14/27 → ISR + anti-rebond 30 ms par timer → bascule immédiate de
-   GPIO22/19. Fonctionne WiFi coupé, HA éteint, écran planté.
-2. Le nouvel état est ensuite poussé vers HA : chaque relais porte une entité miroir
-   configurable (`rly1_ent`, défaut `input_boolean.<panneau>_relais_1`) ; le firmware appelle
-   le service de bascule correspondant.
-3. Sens inverse : `ha_ws` est déjà abonné à `state_changed` ; si l'entité miroir change côté
-   HA, `ui_worker` aligne le GPIO. Boucle coupée par comparaison d'état avant écriture.
+   GPIO22/19 (sauf canal détaché, voir ci-dessous). Fonctionne WiFi coupé, HA éteint,
+   écran planté.
+2. Le nouvel état est ensuite poussé vers HA : `ha_mqtt.c` publie sur
+   `nspanel/<node>/relay/<1|2>/state` (retenu), sous un appareil « NSPanel » découvert
+   via `homeassistant/switch/<node>/relais_<1|2>/config`.
+3. Sens inverse : `nspanel/<node>/relay/<1|2>/set` est souscrit ; une commande HA appelle
+   `nspanel_relay_set()` (n'émet pas le callback relais, donc pas de boucle) puis republie
+   l'état.
+4. **Bouton découplé du relais** : chaque bouton remonte systématiquement un événement
+   (`event.*` HA, `press`/`long_press`) même quand il ne pilote plus le relais. Une entité
+   `switch.*_bouton_N_detache` (entity_category config) permet de couper le lien local par
+   canal, pour piloter le relais uniquement depuis une automatisation HA.
 
-NTC GPIO38 : lecture ADC1 périodique (30 s), conversion Steinhart-Hart, publication via
-`ha_set_state("sensor.<panneau>_temperature", …)`, et affichage sur `home`. Note : la sonde
-est sous la dalle et lit ~3-5 °C au-dessus de l'ambiante ; prévoir un offset en NVS.
+NTC GPIO38 : lecture ADC1 périodique (30 s), conversion Steinhart-Hart, offset réglable
+(`settings_ntc_offset_tenths`, entité HA `number.*`) puis publication retenue sur
+`nspanel/<node>/sensor/temperature`. La sonde est sous la dalle et lit ~3-5 °C au-dessus de
+l'ambiante — d'où l'offset, plutôt qu'une valeur brute.
+
+RSSI et uptime sont publiés en entités diagnostic (`sensor.*`, ~60 s) sur le même appareil.
 
 Buzzer GPIO21 : simple PWM LEDC, un bip d'accusé de réception tactile.
 
@@ -374,7 +387,7 @@ ton rythme, sans jamais casser un panneau qui tourne.
    `ha_ws`, page `lights` avec sliders et pushes WS, `home` minimal (horloge, date, pièce).
 3. **Chauffage + Météo.** Pages `climate` et `weather` ; `ha_weather.c` repris tel quel.
 4. **Accueil complet + Paramètres.** Tuiles agrégées de `home`, page `cfg`, relais/boutons/NTC
-   bouclés sur HA, veille `thsp`/`dim`.
+   exposés par MQTT discovery (`ha/ha_mqtt.c`), veille `thsp`/`dim`.
 5. **OTA applicatif.** `ota_manager` + `scripts/release.sh` adapté. (Le TFT-OTA est déjà là
    depuis la phase 1.)
 
@@ -407,7 +420,8 @@ idf.py size                       # marge sur ota_0 = 1792K
   suivre sur l'écran en moins d'une seconde (push WS, pas le poll). Dans l'autre sens,
   vérifier avec `mcp__home-assistant__ha_get_state` que le service part bien.
 - **Phase 4** : couper le WiFi de HA, appuyer sur les boutons physiques → les relais doivent
-  claquer quand même. Rebrancher → les entités miroir doivent se resynchroniser.
+  claquer quand même. Rebrancher → `switch.*_relais_*` doit se resynchroniser sur l'état réel
+  (état retenu republié à la reconnexion MQTT, voir `ha_mqtt_start`).
 - **Phase 5** : bumper la version, publier, vérifier la bascule A/B et le rollback en
   provoquant un crash volontaire.
 

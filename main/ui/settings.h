@@ -27,6 +27,12 @@ void settings_save_sleep_enabled(int enabled);
 int  settings_sleep_timeout_s(void);
 void settings_save_sleep_timeout(int sec);
 
+/** Offset appliqué à la lecture de la sonde NTC (dixièmes de °C, signé) :
+ *  la sonde est sous la dalle et lit ~3-5 °C au-dessus de l'ambiante
+ *  (voir design/FORK-PLAN.md). Réglable depuis HA (entité number.*). */
+int  settings_ntc_offset_tenths(void);
+void settings_save_ntc_offset_tenths(int tenths);
+
 #ifdef __cplusplus
 }
 #endif

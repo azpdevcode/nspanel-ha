@@ -83,9 +83,9 @@ static const char PAGE_HEAD[] =
 static esp_err_t get_root(httpd_req_t *req)
 {
     /* Buffer transitoire, libéré en fin de requête. */
-    char *body = malloc(2048);
+    char *body = malloc(2560);
     if (!body) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "mem");
-    snprintf(body, 2048,
+    snprintf(body, 2560,
         "%s"
         "<h1>Compte Home Assistant</h1>"
         "<form method=POST action=/save>"
@@ -97,11 +97,23 @@ static esp_err_t get_root(httpd_req_t *req)
         "<input name=ha_token type=password placeholder=\"%s\">"
         "<p class=h>Profil HA &rarr; Jetons d'acc&egrave;s longue dur&eacute;e. "
         "Laisser vide pour conserver le token actuel.</p>"
+        "<label>Broker MQTT (relais/boutons)</label>"
+        "<input name=mqtt_uri value=\"%s\" placeholder=\"mqtt://192.168.x.x:1883\">"
+        "<p class=h>Vide = relais/boutons non expos&eacute;s dans HA. "
+        "Laisser vide pour d&eacute;sactiver.</p>"
+        "<label>Utilisateur MQTT</label>"
+        "<input name=mqtt_user value=\"%s\" placeholder=\"(optionnel)\">"
+        "<label>Mot de passe MQTT</label>"
+        "<input name=mqtt_pass type=password placeholder=\"%s\">"
+        "<p class=h>Laisser vide pour conserver le mot de passe actuel.</p>"
         "<button type=submit>Enregistrer &amp; red&eacute;marrer</button>"
         "</form></div></body></html>",
         PAGE_HEAD, app_config_ha_url(),
         app_config_ha_token()[0] ? "token enregistre - coller pour le remplacer"
-                                 : "coller le token ici");
+                                 : "coller le token ici",
+        app_config_mqtt_uri(), app_config_mqtt_user(),
+        app_config_mqtt_pass()[0] ? "mot de passe enregistre - coller pour le remplacer"
+                                  : "");
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     esp_err_t r = httpd_resp_send(req, body, HTTPD_RESP_USE_STRLEN);
     free(body);
@@ -116,13 +128,20 @@ static void restart_cb(void *arg)
 }
 
 /* Tailles des sous-buffers (cf. découpage du bloc PSRAM ci-dessous). */
-#define P_RAW   1024
+#define P_RAW   2048
 #define P_UENC  (APP_CFG_URL_MAX * 3)
 #define P_TENC  (APP_CFG_TOKEN_MAX * 3)
 #define P_URL   APP_CFG_URL_MAX
 #define P_TOK   APP_CFG_TOKEN_MAX
+#define P_MU_ENC (APP_CFG_MQTT_URI_MAX * 3)
+#define P_MN_ENC (APP_CFG_MQTT_USER_MAX * 3)
+#define P_MP_ENC (APP_CFG_MQTT_PASS_MAX * 3)
+#define P_MU     APP_CFG_MQTT_URI_MAX
+#define P_MN     APP_CFG_MQTT_USER_MAX
+#define P_MP     APP_CFG_MQTT_PASS_MAX
 #define P_BODY  1280
-#define P_TOTAL (P_RAW + P_UENC + P_TENC + P_URL + P_TOK + P_BODY)
+#define P_TOTAL (P_RAW + P_UENC + P_TENC + P_URL + P_TOK + \
+                P_MU_ENC + P_MN_ENC + P_MP_ENC + P_MU + P_MN + P_MP + P_BODY)
 
 static esp_err_t post_save(httpd_req_t *req)
 {
@@ -132,9 +151,15 @@ static esp_err_t post_save(httpd_req_t *req)
     char *raw     = mem;
     char *url_enc = raw + P_RAW;
     char *tok_enc = url_enc + P_UENC;
-    char *url     = tok_enc + P_TENC;
+    char *mu_enc  = tok_enc + P_TENC;
+    char *mn_enc  = mu_enc + P_MU_ENC;
+    char *mp_enc  = mn_enc + P_MN_ENC;
+    char *url     = mp_enc + P_MP_ENC;
     char *token   = url + P_URL;
-    char *body    = token + P_TOK;
+    char *mqtt_uri  = token + P_TOK;
+    char *mqtt_user = mqtt_uri + P_MU;
+    char *mqtt_pass = mqtt_user + P_MN;
+    char *body      = mqtt_pass + P_MP;
 
     /* Corps form-urlencoded : ha_url=...&ha_token=... */
     int total = req->content_len;
@@ -153,13 +178,28 @@ static esp_err_t post_save(httpd_req_t *req)
     }
     raw[total] = '\0';
 
-    url[0] = token[0] = '\0';
+    url[0] = token[0] = mqtt_uri[0] = mqtt_user[0] = mqtt_pass[0] = '\0';
     if (httpd_query_key_value(raw, "ha_url", url_enc, P_UENC) == ESP_OK)
         url_decode(url_enc, url, P_URL);
     if (httpd_query_key_value(raw, "ha_token", tok_enc, P_TENC) == ESP_OK)
         url_decode(tok_enc, token, P_TOK);
+    if (httpd_query_key_value(raw, "mqtt_uri", mu_enc, P_MU_ENC) == ESP_OK)
+        url_decode(mu_enc, mqtt_uri, P_MU);
+    if (httpd_query_key_value(raw, "mqtt_user", mn_enc, P_MN_ENC) == ESP_OK)
+        url_decode(mn_enc, mqtt_user, P_MN);
+    if (httpd_query_key_value(raw, "mqtt_pass", mp_enc, P_MP_ENC) == ESP_OK)
+        url_decode(mp_enc, mqtt_pass, P_MP);
     trim(url);
     trim(token);
+    trim(mqtt_uri);
+    trim(mqtt_user);
+    trim(mqtt_pass);
+
+    /* Mot de passe MQTT vide → conserver l'actuel (même logique que le token HA). */
+    if (mqtt_pass[0] == '\0') {
+        strncpy(mqtt_pass, app_config_mqtt_pass(), P_MP - 1);
+        mqtt_pass[P_MP - 1] = '\0';
+    }
 
     /* Token vide → conserver l'actuel (le formulaire ne le renvoie pas). */
     if (token[0] == '\0') {
@@ -177,6 +217,9 @@ static esp_err_t post_save(httpd_req_t *req)
         free(mem);
         return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "enregistrement");
     }
+    /* Non fatal : le compte HA est la valeur qui compte le plus, MQTT reste optionnel. */
+    if (app_config_set_mqtt(mqtt_uri, mqtt_user, mqtt_pass) != ESP_OK)
+        ESP_LOGW(TAG, "échec enregistrement config MQTT");
 
     /* url pointe dans `mem` comme body → on relit la valeur depuis le cache
      * app_config (objet distinct) pour éviter un chevauchement (-Wrestrict). */

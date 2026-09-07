@@ -40,15 +40,23 @@ menu "NSPanel HA configuration"
                 Filet de resync : les états sont poussés en temps réel via le
                 WebSocket HA (ha_ws). Le poll ne sert que de garde-fou.
 
-        config HA_RELAY1_ENTITY
-            string "Entité miroir HA du relais 1 (vide = pas de miroir)"
+    endmenu
+
+    menu "MQTT (relais / boutons)"
+        config MQTT_BROKER_URI
+            string "URI du broker MQTT (repli ; configuré via le portail web)"
             default ""
             help
-                Entité (typiquement input_boolean.*) basculée en écho quand le
-                relais 1 change localement, et inversement.
+                Ex. mqtt://192.168.1.10:1883. Sert à publier les relais et
+                boutons vers Home Assistant par MQTT discovery — voir
+                main/ha/ha_mqtt.c. Vide = fonctionnalité désactivée.
 
-        config HA_RELAY2_ENTITY
-            string "Entité miroir HA du relais 2 (vide = pas de miroir)"
+        config MQTT_USERNAME
+            string "Utilisateur MQTT (repli ; configuré via le portail web)"
+            default ""
+
+        config MQTT_PASSWORD
+            string "Mot de passe MQTT (repli ; configuré via le portail web)"
             default ""
     endmenu
 

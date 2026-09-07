@@ -88,10 +88,34 @@ l'alimentation, ce que le montage ne permet pas toujours.
 Le firmware tourne avec un `.tft` partiel — voir la section « Tolérance au
 TFT partiel » du plan de fork.
 
+## Home Assistant : relais et boutons
+
+En plus du compte HA (WebSocket/REST, ci-dessus), les 2 relais et les 2 boutons muraux
+sont exposés séparément par **MQTT discovery** sur `http://<ip-panneau>/` : renseigner
+l'URI d'un broker (`mqtt://<ip-ha>:1883`, identifiants optionnels) sous « Broker MQTT ».
+Laisser ce champ vide désactive la fonctionnalité — le panneau continue de fonctionner
+sans (relais pilotables uniquement en local).
+
+Une fois connecté, un appareil « NSPanel `<node>` » apparaît dans HA avec :
+
+- `switch.*_relais_1` / `_2` — pilotables depuis HA, utilisables en automatisation.
+- `event.*_bouton_1` / `_2` — un événement `press`/`long_press` à **chaque** appui
+  physique, que le bouton pilote encore son relais ou non.
+- `switch.*_bouton_1_detache` / `_2` — détache le bouton de son relais (l'appui continue
+  de remonter l'événement, mais ne bascule plus le GPIO) ; pratique pour reprendre le
+  contrôle du relais entièrement depuis une automatisation.
+- `sensor.*_temperature` et `number.*_offset_temperature` — sonde NTC (elle lit 3-5 °C
+  au-dessus de l'ambiante ; l'offset se règle depuis HA).
+- `sensor.*_rssi`, `sensor.*_uptime` — diagnostic.
+
+L'appui physique bascule toujours le relais **localement en premier** (fonctionne WiFi
+ou HA coupés) ; l'état est ensuite republié vers HA. Voir `main/ha/ha_mqtt.c` et
+`design/FORK-PLAN.md`, section « Relais, boutons, sonde ».
+
 ## Diagnostic
 
 Le moniteur série étant rarement disponible (voir ci-dessus), l'état passe par
-HTTP : `GET /status` (WiFi, débit écran, `vSpec`, pages, TFT-OTA), `POST /nx`
+HTTP : `GET /status` (WiFi, débit écran, `vSpec`, pages, TFT-OTA, bloc `mqtt`), `POST /nx`
 (commande brute vers l'écran, réponse en hexa), `POST /scan` (rebalayage des
 débits). Détails dans `design/FORK-PLAN.md`, section « Diagnostic sans moniteur
 série ».

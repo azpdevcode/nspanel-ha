@@ -29,6 +29,7 @@
 #include "settings.h"
 #include "ha_worker.h"
 #include "ha_ws.h"
+#include "ha_mqtt.h"
 #include "rooms.h"
 
 static const char *TAG = "main";
@@ -38,11 +39,15 @@ static const char *TAG = "main";
         if (_e != ESP_OK) ESP_LOGW(TAG, "%s: %s (non fatal, on continue)", what, esp_err_to_name(_e)); \
     } while (0)
 
-/* Relais physiques : miroir HA à brancher en phase 4 (settings.c fournira les
- * entités rly1_ent/rly2_ent). Pour l'instant, on trace juste l'événement. */
 static void on_relay_local_change(int idx, bool on)
 {
-    ESP_LOGI(TAG, "relais %d -> %s (miroir HA à câbler en phase 4)", idx + 1, on ? "ON" : "OFF");
+    ESP_LOGI(TAG, "relais %d -> %s", idx + 1, on ? "ON" : "OFF");
+    ha_mqtt_publish_relay(idx, on);
+}
+
+static void on_button_event(int idx, bool long_press)
+{
+    ha_mqtt_publish_button(idx, long_press);
 }
 
 static void on_longpress(void)
@@ -54,7 +59,10 @@ static void on_longpress(void)
 
 static void on_ntc(float c)
 {
-    if (c == c) ESP_LOGD(TAG, "NTC: %.1f °C", c);   /* c==c écarte NAN sans <math.h> ici */
+    if (c != c) return;   /* c!=c écarte NAN sans <math.h> ici */
+    float corrected = c + settings_ntc_offset_tenths() / 10.0f;
+    ESP_LOGD(TAG, "NTC: %.1f °C (brut %.1f)", corrected, c);
+    ha_mqtt_publish_temperature(corrected);
 }
 
 
@@ -74,6 +82,7 @@ void app_main(void)
     ESP_ERROR_CHECK(nspanel_io_init());
     nspanel_io_set_relay_cb(on_relay_local_change);
     nspanel_io_set_longpress_cb(on_longpress);
+    nspanel_io_set_button_cb(on_button_event);
     nspanel_io_set_ntc_cb(on_ntc);
 
     if (nspanel_io_boot_bridge_requested()) {
@@ -110,6 +119,7 @@ void app_main(void)
     settings_load();
     TRY_INIT(ha_worker_start(), "ha_worker_start");
     TRY_INIT(ha_ws_start(), "ha_ws_start");
+    TRY_INIT(ha_mqtt_start(), "ha_mqtt_start");
     rooms_start_fetch();
     TRY_INIT(rooms_watchdog_start(), "rooms_watchdog_start");
 
@@ -121,6 +131,7 @@ void app_main(void)
      * pouvoir le constater à tout moment sur une écoute de quelques secondes. */
     int tick = 0;
     for (;;) {
+        if (tick % 30 == 0) ha_mqtt_publish_diag();   /* ~60 s */
         if (++tick % 3 == 0) {   /* ~6 s */
             char ip[16] = "-";
             wifi_get_ip(ip, sizeof(ip));

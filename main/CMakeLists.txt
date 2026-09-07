@@ -14,6 +14,7 @@ idf_component_register(
         "ota/app_ota.c"
         "ha/ha_client.c"
         "ha/ha_ws.c"
+        "ha/ha_mqtt.c"
         "ui/ui.c"
         "ui/rooms.c"
         "ui/settings.c"
@@ -34,6 +35,7 @@ idf_component_register(
         esp_http_client
         esp_http_server
         esp_websocket_client
+        mqtt
         json
         nvs_flash
         esp_https_ota
