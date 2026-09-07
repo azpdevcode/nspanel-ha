@@ -44,10 +44,14 @@ modification ici doit se refléter dans ces deux fichiers (et réciproquement).
   en ressources Picture, affichés par `pic`/`picq`. Le jeu complet (fonds de
   page compris) est **généré** par `design/images/gen_images.py`, pas dessiné à
   la main — voir « Ressources Picture » ci-dessous.
-- Palette RGB565 dérivée de `ui_common.h` du panneau P4 :
-  fond `0x0841` (≈`COL_BG` 0x0d1117), lumières `0xF585` (`COL_LIGHTS`
-  0xf5b133), chauffage `0xF337` (`COL_HEAT` 0xf2683c), accueil `0x39F8`
-  (`COL_HOME` 0x3b82f6).
+- Palette : **`ui_common.h` du panneau P4 fait foi**, et `gen_images.py` la lit
+  à la génération (`HA_PANEL_UI_COMMON` pour pointer ailleurs ; sans le dépôt
+  voisin, une copie de secours prend le relais). Aucune teinte n'est donc
+  recopiée ici — pour l'Editor, relever la valeur voulue dans ce fichier.
+  Chaque couleur est ramenée à la grille RGB565 **par arrondi** avant usage :
+  une couleur exacte traverse le tramage sans erreur, donc sans bruit sur les
+  aplats. Attention, `>>3` (troncature) décale toute la palette vers le sombre —
+  `COL_BG` 0x0d1117 donne `0x1083` en arrondi, pas `0x0841`.
 
 ## Ressources Picture
 

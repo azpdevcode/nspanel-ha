@@ -26,6 +26,7 @@ tramés, sans escalier — c'est ce que fait `ui_grad_v()` sur le P4.
 import csv
 import io
 import os
+import re
 import sys
 
 import cairosvg
@@ -37,27 +38,76 @@ from icons import ICONS  # noqa: E402
 W, H = 480, 320                       # 480×320 paysage (résolution native)
 
 
-def snap565(hexstr):
-    """Couleur ramenée à la valeur exacte que l'écran affichera en RGB565."""
-    r, g, b = (int(hexstr[i:i + 2], 16) for i in (1, 3, 5))
-    r, g, b = (r >> 3) * 255 // 31, (g >> 2) * 255 // 63, (b >> 3) * 255 // 31
-    return "#%02x%02x%02x" % (r, g, b)
+# --- palette --------------------------------------------------------------
+# Source de vérité : `ui_common.h` du panneau P4, lu à la génération plutôt que
+# recopié — une teinte ne doit exister qu'à un seul endroit pour les deux
+# panneaux. Le dépôt voisin n'est pas une dépendance dure : sans lui, on
+# retombe sur la copie ci-dessous (à resynchroniser si le P4 bouge).
+
+HA_PANEL_UI_COMMON = os.environ.get(
+    "HA_PANEL_UI_COMMON",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                 "..", "..", "..", "ha-panel", "main", "ui", "ui_common.h"))
+
+PALETTE_FALLBACK = {
+    "COL_BG": 0x0d1117, "COL_SIDEBAR": 0x11161d, "COL_CARD": 0x161c24,
+    "COL_CARD2": 0x1b2230, "COL_TXT": 0xeef2f6, "COL_TXT_DIM": 0x8a93a2,
+    "COL_TXT_FAINT": 0x5a636e, "COL_LIGHTS": 0xf5b133, "COL_HEAT": 0xf2683c,
+    "COL_HEAT_SOFT": 0xf9a07a, "COL_HOME": 0x3b82f6, "COL_GREEN": 0x34d399,
+    "COL_RED": 0xef4444, "COL_NAVY": 0x1e3a8a, "COL_NAVY_LT": 0x6d7fb3,
+    "SKY_DAY_T": 0x2563eb, "SKY_DAY_B": 0x0e2a5e,
+}
 
 
-BG      = snap565("#0d1117")
-CARD    = snap565("#161c24")
-CARD2   = snap565("#1b2230")
-TXT     = snap565("#eef2f6")
-DIM     = snap565("#8a93a2")
-FAINT   = snap565("#5a636e")
-LIGHTS  = snap565("#f5b133")
-HEAT    = snap565("#f2683c")
-HEAT_SOFT = snap565("#f9a07a")        # anneau « température actuelle »
-HOME    = snap565("#3b82f6")
-GREEN   = snap565("#34d399")
-RED     = snap565("#ef4444")
-SKY_T   = snap565("#2563eb")          # dégradé météo, haut
-SKY_B   = snap565("#0e2a5e")          # dégradé météo, bas
+def load_palette():
+    """Couleurs de `ui_common.h`, ou la copie de secours si le P4 est absent."""
+    try:
+        src = io.open(HA_PANEL_UI_COMMON, encoding="utf-8").read()
+    except OSError:
+        print("ui_common.h introuvable (%s) — palette de secours"
+              % HA_PANEL_UI_COMMON, file=sys.stderr)
+        return dict(PALETTE_FALLBACK), "copie locale"
+    found = dict(re.findall(r"#define\s+((?:COL|SKY)_\w+)\s+0x([0-9a-fA-F]{6})", src))
+    pal = {k: int(v, 16) for k, v in found.items()}
+    missing = [k for k in PALETTE_FALLBACK if k not in pal]
+    if missing:
+        raise SystemExit("couleurs absentes de %s : %s"
+                         % (HA_PANEL_UI_COMMON, ", ".join(missing)))
+    return pal, HA_PANEL_UI_COMMON
+
+
+def snap565(rgb24):
+    """Couleur ramenée à la valeur exacte que l'écran affichera en RGB565.
+
+    Arrondi au plus proche, pas troncature : `>>3` décale toute la palette vers
+    le sombre (jusqu'à 4 %), ce qui se voit sur les gris. Une couleur déjà
+    exacte traverse `dither565()` sans erreur, donc sans bruit sur les aplats."""
+    out = []
+    for shift, bits in ((16, 5), (8, 6), (0, 5)):
+        v = (rgb24 >> shift) & 0xff
+        top = (1 << bits) - 1
+        out.append(int(round(v * top / 255.0)) * 255 // top)
+    return "#%02x%02x%02x" % tuple(out)
+
+
+PAL, PAL_SRC = load_palette()
+_c = lambda name: snap565(PAL[name])
+
+BG        = _c("COL_BG")
+CARD      = _c("COL_CARD")
+CARD2     = _c("COL_CARD2")
+TXT       = _c("COL_TXT")
+DIM       = _c("COL_TXT_DIM")
+FAINT     = _c("COL_TXT_FAINT")
+LIGHTS    = _c("COL_LIGHTS")
+HEAT      = _c("COL_HEAT")
+HEAT_SOFT = _c("COL_HEAT_SOFT")       # anneau « température actuelle »
+HOME      = _c("COL_HOME")
+GREEN     = _c("COL_GREEN")
+RED       = _c("COL_RED")
+NAVY      = _c("COL_NAVY")            # séparateurs sur le dégradé
+SKY_T     = _c("SKY_DAY_T")           # dégradé météo, haut
+SKY_B     = _c("SKY_DAY_B")           # dégradé météo, bas
 
 F_REG  = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 F_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
@@ -129,8 +179,9 @@ def dither565(img):
     aucun bruit sur les aplats. Seuls les dégradés et l'anticrénelage sont
     tramés — l'écran affiche alors exactement ces pixels, sans requantifier."""
     w, h = img.size
-    px = list(img.convert("RGB").getdata())
-    buf = [[float(v) for v in p] for p in px]          # ligne à plat, w*h
+    raw = img.convert("RGB").tobytes()
+    buf = [[float(raw[i]), float(raw[i + 1]), float(raw[i + 2])]
+           for i in range(0, len(raw), 3)]             # ligne à plat, w*h
     step = (255.0 / 31, 255.0 / 63, 255.0 / 31)
     top = (31, 63, 31)
     for y in range(h):
@@ -162,9 +213,11 @@ def dither565(img):
                     n = buf[i + w + 1]
                     for c in range(3):
                         n[c] += err[c] * 0.0625
-    out = Image.new("RGB", (w, h))
-    out.putdata([tuple(min(255, max(0, int(round(v)))) for v in p) for p in buf])
-    return out
+    flat = bytearray(w * h * 3)
+    for i, p in enumerate(buf):
+        for c in range(3):
+            flat[i * 3 + c] = min(255, max(0, int(round(p[c]))))
+    return Image.frombytes("RGB", (w, h), bytes(flat))
 
 
 # --- primitives de fond ---------------------------------------------------
@@ -274,9 +327,9 @@ def bg_weather():
     stamp(img, (16, 12), "weather", 20, TXT)
     label(d, (42, 22), "Météo", TXT, 15, "lm")
     for x, txt in ((8, "HUMIDITÉ"), (168, "VENT"), (328, "PRESSION")):
-        label(d, (x + 12, 156), txt, "#9fc0f5", 11)
-    d.line((8, 146, W - 8, 146), fill="#4a74c8", width=1)
-    d.line((8, 190, W - 8, 190), fill="#4a74c8", width=1)
+        label(d, (x + 12, 156), txt, DIM, 11)
+    d.line((8, 146, W - 8, 146), fill=NAVY, width=1)
+    d.line((8, 190, W - 8, 190), fill=NAVY, width=1)
     return img
 
 
@@ -372,6 +425,7 @@ def main(outdir):
         w.writerows(rows)
 
     total = sum(r["octets"] for r in rows)
+    print("palette : %s" % PAL_SRC)
     print("%d fichiers, %.1f Ko au total (~%.0f s d'upload TFT à 11 Ko/s)"
           % (len(rows), total / 1024.0, total / 11264.0))
 
