@@ -7,12 +7,15 @@
 #include "app_config.h"
 #include "ha_ws.h"
 #include "rooms.h"
+#include "settings.h"
 
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#include "esp_app_desc.h"
 #include "esp_log.h"
+#include "esp_system.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -41,6 +44,22 @@ static const ui_nav_t s_nav[] = {
 #undef NX_NAV
 };
 
+/* ---- Actions (hors navigation) ---- */
+
+typedef enum {
+#define NX_ACT(page, cid, act) act,
+#include "nx_actions.def"
+#undef NX_ACT
+} ui_action_t;
+
+typedef struct { nx_page_t page; uint8_t cid; ui_action_t act; } ui_act_t;
+
+static const ui_act_t s_act[] = {
+#define NX_ACT(page, cid, act) { page, cid, act },
+#include "nx_actions.def"
+#undef NX_ACT
+};
+
 /* Page réellement affichée, telle que NOUS l'avons demandée. Pas de sendme
  * périodique : l'écran ne change de page que sur notre ordre. */
 static nx_page_t s_page = NXP_BOOT;
@@ -51,8 +70,15 @@ static uint32_t s_last_touch_s;
 /* Aucune page secondaire n'a de bouton retour dessiné pour l'instant, et rien
  * ne garantit qu'on pensera à en mettre un partout : sans ce garde-fou, un
  * appui malheureux laisse le panneau bloqué sur une page jusqu'au prochain
- * redémarrage. */
+ * redémarrage. `cfg` a besoin de plus de temps : on y lit des diagnostics et
+ * on glisse des curseurs, pas un aller-retour de quelques secondes. */
 #define UI_HOME_TIMEOUT_S 30
+#define UI_CFG_TIMEOUT_S 120
+
+static uint32_t ui_timeout_s(void)
+{
+    return s_page == NXP_CFG ? UI_CFG_TIMEOUT_S : UI_HOME_TIMEOUT_S;
+}
 
 /* Un dessin (nx_draw_arc) s'applique à la page affichée et ne survit ni à un
  * changement de page ni à un cycle veille/réveil : ce drapeau fait repeindre
@@ -60,11 +86,16 @@ static uint32_t s_last_touch_s;
  * dessiner « en aveugle » sur une autre page. */
 static volatile bool s_home_needs_repaint;
 
+/* Écrire `hDim`/`hSleep` à chaque tick ferait sauter le curseur sous le doigt
+ * de l'utilisateur : on ne les (re)synchronise qu'à l'entrée sur la page. */
+static volatile bool s_cfg_needs_sync;
+
 static bool goto_page(nx_page_t p)
 {
     if (!nx_page(p)) return false;   /* page absente du .tft : no-op silencieux */
     s_page = p;
     if (p == NXP_HOME) s_home_needs_repaint = true;
+    if (p == NXP_CFG) s_cfg_needs_sync = true;
     ESP_LOGI(TAG, "page -> %d", (int)p);
     return true;
 }
@@ -85,6 +116,16 @@ int ui_touch_history(ui_touch_rec_t *out, int max)
     return have;
 }
 
+/* ACT_DIM/ACT_SLEEP sont les deux seules actions déclenchées sur RELÂCHE
+ * (Slider : la valeur n'est stable qu'une fois le doigt levé) ; toutes les
+ * autres actions, comme la navigation, se déclenchent sur APPUI. */
+static bool act_is_release(ui_action_t act)
+{
+    return act == ACT_DIM || act == ACT_SLEEP;
+}
+
+static void ui_do_action(ui_action_t act);
+
 static void drain_touches(void)
 {
     nx_touch_t t;
@@ -97,10 +138,18 @@ static void drain_touches(void)
         ESP_LOGI(TAG, "tactile : page=%u cid=%u %s",
                  t.page, t.cid, t.pressed ? "appui" : "relâche");
 
-        /* Sur l'APPUI, pas la relâche : un hotspot dont seul « Send Component
-         * ID » du Touch Press Event est coché n'émet jamais de relâche, et rien
-         * dans le .tft ne permet de le savoir à l'avance. */
-        if (!t.pressed) continue;
+        if (!t.pressed) {
+            /* Slider relâché : c'est le seul cas où la relâche nous intéresse. */
+            for (size_t i = 0; i < sizeof(s_act) / sizeof(s_act[0]); i++) {
+                if (s_act[i].page == s_page && s_act[i].cid == t.cid &&
+                    act_is_release(s_act[i].act)) {
+                    s_last_touch_s = (uint32_t)(esp_timer_get_time() / 1000000);
+                    ui_do_action(s_act[i].act);
+                    break;
+                }
+            }
+            continue;
+        }
         s_last_touch_s = (uint32_t)(esp_timer_get_time() / 1000000);
 
         /* Réveil (0x87) : pas de navigation à faire, mais un dessin en cours
@@ -110,9 +159,20 @@ static void drain_touches(void)
             continue;
         }
 
+        bool handled = false;
         for (size_t i = 0; i < sizeof(s_nav) / sizeof(s_nav[0]); i++) {
             if (s_nav[i].from == s_page && s_nav[i].cid == t.cid) {
                 goto_page(s_nav[i].to);
+                handled = true;
+                break;
+            }
+        }
+        if (handled) continue;
+
+        for (size_t i = 0; i < sizeof(s_act) / sizeof(s_act[0]); i++) {
+            if (s_act[i].page == s_page && s_act[i].cid == t.cid &&
+                !act_is_release(s_act[i].act)) {
+                ui_do_action(s_act[i].act);
                 break;
             }
         }
@@ -203,12 +263,21 @@ static void home_page_placeholders_once(void)
  * P4 (ha-panel/main/ui/page_accueil.c:565-578) : 0..50 °C sur 270°, anneau
  * extérieur = mesure, anneau intérieur = consigne. Géométrie et couleurs
  * doivent rester en phase avec design/EDITOR-HOME.md (tuile Chauffage). */
-#define HOME_ARC_CX      360
-#define HOME_ARC_CY      130
-#define HOME_ARC_R_OUT    52
-#define HOME_ARC_TH_OUT    9
-#define HOME_ARC_R_IN     34
-#define HOME_ARC_TH_IN     7
+/* Décalé à gauche de la tuile et abaissé sous le titre « Chauffage » (icône +
+ * libellé, y≈52..80 dans gen_images.py:bg_home) : un centrage sur la tuile
+ * mettait le trou de l'anneau juste sous le titre, et le texte tTemp/tSet posé
+ * dedans (voir plus bas) débordait du trou (coin à ~38 px, bord intérieur sûr
+ * à R_IN-TH_IN/2 = 30.5 px) — chaque resynchro périodique de home_page_tick()
+ * repeignait alors son rectangle et effaçait l'anneau dessous (pas de
+ * framebuffer partagé sur le Nextion, contrairement au P4/LVGL). Anneau plus
+ * petit + texte posé à DROITE de l'anneau (zone libre, sans contrainte de
+ * rayon) plutôt que dedans : voir design/EDITOR-HOME.md. */
+#define HOME_ARC_CX      290
+#define HOME_ARC_CY      138
+#define HOME_ARC_R_OUT    40
+#define HOME_ARC_TH_OUT    8
+#define HOME_ARC_R_IN     25
+#define HOME_ARC_TH_IN     6
 #define HOME_ARC_A_START 135
 #define HOME_ARC_A_SWEEP 270
 #define HOME_ARC_TMAX      50.0f
@@ -322,6 +391,117 @@ static void home_page_tick(const struct tm *tm)
     }
 }
 
+/* ---- Page cfg (Paramètres) ---- */
+
+/* Message temporaire affiché dans tVer à la place de la version, ex. l'invite
+ * du portail web pour OTA/TFT (pas de clavier tactile pour une URL). Revient
+ * de lui-même : pas de drapeau à réarmer ailleurs. */
+static char s_cfg_msg[UI_CACHE_LEN];
+static uint32_t s_cfg_msg_until_s;
+
+#define UI_CFG_MSG_S 5
+
+static void cfg_show_msg(const char *msg)
+{
+    snprintf(s_cfg_msg, sizeof(s_cfg_msg), "%s", msg);
+    s_cfg_msg_until_s = (uint32_t)(esp_timer_get_time() / 1000000) + UI_CFG_MSG_S;
+}
+
+static void cfg_page_tick(void)
+{
+    static char room_cache[UI_CACHE_LEN], dim_cache[UI_CACHE_LEN];
+    static char sleep_cache[UI_CACHE_LEN], ssid_cache[UI_CACHE_LEN];
+    static char ip_cache[UI_CACHE_LEN], ha_cache[UI_CACHE_LEN], ver_cache[UI_CACHE_LEN];
+    char buf[UI_CACHE_LEN];
+    bool force = resync_due();
+
+    snprintf(buf, sizeof(buf), "%s", rooms_count() ? rooms_name(rooms_current()) : "pièce ?");
+    set_if_changed(CFG_ROOM, room_cache, buf, force);
+
+    snprintf(buf, sizeof(buf), "%d %%", settings_brightness());
+    set_if_changed(CFG_DIM_TXT, dim_cache, buf, force);
+
+    if (settings_sleep_enabled())
+        snprintf(buf, sizeof(buf), "%d s", settings_sleep_timeout_s());
+    else
+        snprintf(buf, sizeof(buf), "désactivée");
+    set_if_changed(CFG_SLEEP_TXT, sleep_cache, buf, force);
+
+    snprintf(buf, sizeof(buf), "%s", app_config_wifi_ssid());
+    set_if_changed(CFG_SSID, ssid_cache, buf, force);
+
+    char ip[16] = "--";
+    if (!wifi_is_connected() || !wifi_get_ip(ip, sizeof(ip))) snprintf(ip, sizeof(ip), "--");
+    set_if_changed(CFG_IP, ip_cache, ip, force);
+
+    const char *ha;
+    if (!app_config_ha_set()) ha = "non configuré";
+    else if (ha_ws_is_ready()) ha = "connecté";
+    else if (ha_ws_auth_invalid()) ha = "token refusé";
+    else if (ha_ws_is_authed()) ha = "abonnement…";
+    else ha = "connexion…";
+    set_if_changed(CFG_HA, ha_cache, ha, force);
+
+    uint32_t now_s = (uint32_t)(esp_timer_get_time() / 1000000);
+    if (now_s < s_cfg_msg_until_s) {
+        set_if_changed(CFG_VER, ver_cache, s_cfg_msg, false);
+    } else {
+        const esp_app_desc_t *app = esp_app_get_description();
+        set_if_changed(CFG_VER, ver_cache, app->version, force);
+    }
+
+    if (s_cfg_needs_sync) {
+        nx_set_val(CFG_DIM, settings_brightness());
+        nx_set_val(CFG_SLEEP, settings_sleep_enabled() ? settings_sleep_timeout_s() : 0);
+        s_cfg_needs_sync = false;
+    }
+}
+
+static void ui_do_action(ui_action_t act)
+{
+    int32_t v;
+    char ip[16];
+
+    switch (act) {
+    case ACT_ROOM_PREV:
+    case ACT_ROOM_NEXT: {
+        int n = rooms_count();
+        if (n <= 0) break;
+        int i = rooms_current() + (act == ACT_ROOM_NEXT ? 1 : -1);
+        i = ((i % n) + n) % n;
+        rooms_set_current(i);
+        settings_save_default_room(rooms_name(i));
+        break;
+    }
+    case ACT_DIM:
+        if (nx_get_num(CFG_DIM, &v)) settings_save_brightness((int)v);
+        break;
+    case ACT_SLEEP:
+        if (nx_get_num(CFG_SLEEP, &v)) {
+            if (v <= 0) settings_save_sleep_enabled(0);
+            else {
+                settings_save_sleep_timeout((int)v);
+                settings_save_sleep_enabled(1);
+            }
+        }
+        break;
+    case ACT_OTA:
+    case ACT_TFT:
+        /* Pas de clavier tactile pour une URL : la mise à jour se déclenche
+         * depuis le portail web (POST /ota, /tft), qu'on rappelle ici. */
+        if (wifi_is_connected() && wifi_get_ip(ip, sizeof(ip)))
+            cfg_show_msg(ip);
+        else
+            cfg_show_msg("voir le portail web");
+        break;
+    case ACT_REBOOT:
+        ESP_LOGI(TAG, "redémarrage demandé depuis cfg");
+        vTaskDelay(pdMS_TO_TICKS(300));   /* laisse partir l'écriture NVS en cours */
+        esp_restart();
+        break;
+    }
+}
+
 static void ui_task(void *arg)
 {
     (void)arg;
@@ -349,13 +529,14 @@ static void ui_task(void *arg)
             else boot_page_tick();
         } else if (s_page != NXP_HOME) {
             uint32_t now_s = (uint32_t)(esp_timer_get_time() / 1000000);
-            if (now_s - s_last_touch_s >= UI_HOME_TIMEOUT_S) {
+            if (now_s - s_last_touch_s >= ui_timeout_s()) {
                 ESP_LOGI(TAG, "inactivité : retour à home");
                 goto_page(NXP_HOME);
             }
         }
 
         if (s_page == NXP_HOME) home_page_tick(&tm);
+        else if (s_page == NXP_CFG) cfg_page_tick();
     }
 }
 

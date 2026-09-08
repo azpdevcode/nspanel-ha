@@ -1,0 +1,23 @@
+/*
+ * Actions tactiles hors navigation : NX_ACT(page source, cid, action)
+ *
+ * Même remarque que nx_nav.def : le `cid` est attribué par le Nextion Editor à
+ * la création du composant, n'apparaît nulle part ailleurs dans les sources,
+ * et CHANGE si le composant est supprimé puis recréé. Pour le relever : toucher
+ * la zone, lire `touches` dans /status.
+ *
+ * Les valeurs ci-dessous sont une PRÉDICTION issue de l'ordre de montage décrit
+ * dans design/EDITOR-CFG.md § « Composants » — à corriger après le premier
+ * upload du .tft.
+ *
+ * ACT_DIM / ACT_SLEEP se déclenchent sur RELÂCHE du Slider (Touch Release
+ * Event côté Editor), toutes les autres sur APPUI — voir drain_touches() dans
+ * ui.c.
+ */
+NX_ACT(NXP_CFG, 10, ACT_ROOM_PREV)
+NX_ACT(NXP_CFG, 11, ACT_ROOM_NEXT)
+NX_ACT(NXP_CFG,  4, ACT_DIM)
+NX_ACT(NXP_CFG,  5, ACT_SLEEP)
+NX_ACT(NXP_CFG, 12, ACT_OTA)
+NX_ACT(NXP_CFG, 13, ACT_TFT)
+NX_ACT(NXP_CFG, 14, ACT_REBOOT)

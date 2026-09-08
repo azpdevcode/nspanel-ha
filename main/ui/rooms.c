@@ -16,6 +16,7 @@
 #include "ha_client.h"
 #include "ha_ws.h"
 #include "ha_worker.h"
+#include "settings.h"
 
 static const char *TAG = "rooms";
 
@@ -120,7 +121,17 @@ static void apply_rooms_json(const char *json)
         s_rooms[0].count = 0;
         s_rooms[0].climate[0] = 0;
     }
-    if (s_room_current >= s_room_count) s_room_current = 0;
+    /* Retrouve la pièce par défaut par NOM (settings.c) : l'ordre des aires HA
+     * n'est pas stable d'un fetch à l'autre, donc l'index l'est encore moins.
+     * Pièce renommée/supprimée depuis le dernier choix -> repli sur 0 sans
+     * toucher à la valeur persistée (elle redeviendra valide si l'aire revient). */
+    s_room_current = 0;
+    const char *def_room = settings_default_room();
+    if (def_room[0]) {
+        for (int r = 0; r < s_room_count; r++) {
+            if (strcmp(s_rooms[r].name, def_room) == 0) { s_room_current = r; break; }
+        }
+    }
     build_glights();
     s_dirty = true;
 

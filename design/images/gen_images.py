@@ -37,6 +37,16 @@ from icons import ICONS  # noqa: E402
 
 W, H = 480, 320                       # 480×320 paysage (résolution native)
 
+# La dalle est physiquement masquée sur ~5 px à DROITE par le cadre du boîtier :
+# ces colonnes existent dans l'image et dans les coordonnées Nextion, mais ne
+# sont jamais visibles. Les images gardent donc leur taille native (W), et c'est
+# la MISE EN PAGE qui se replie sur `WU` — sinon tout ce qui est calé à droite
+# (icône cfg, bord des cartes, flèches) disparaît sous le cadre.
+# À reporter dans l'Editor : voir design/EDITOR-HOME.md et design/EDITOR-CFG.md.
+MASK_R = 25
+WU = W - MASK_R                       # 455 px réellement visibles
+M = 8                                 # marge de page, identique à gauche et à droite
+
 
 # --- palette --------------------------------------------------------------
 # Source de vérité : `ui_common.h` du panneau P4, lu à la génération plutôt que
@@ -48,6 +58,12 @@ HA_PANEL_UI_COMMON = os.environ.get(
     "HA_PANEL_UI_COMMON",
     os.path.join(os.path.dirname(os.path.abspath(__file__)),
                  "..", "..", "..", "ha-panel", "main", "ui", "ui_common.h"))
+
+# Poids de la teinte d'accent en haut d'une carte, tel que le P4 le définit
+# (`UI_CARD_ACCENT_W`, sur 255) : le dégradé va de mix(accent, COL_CARD, w) en
+# haut à COL_CARD en bas. Lu à la génération comme la palette — la recette ne
+# doit pas diverger entre les deux panneaux.
+ACCENT_W_FALLBACK = 140
 
 PALETTE_FALLBACK = {
     "COL_BG": 0x0d1117, "COL_SIDEBAR": 0x11161d, "COL_CARD": 0x161c24,
@@ -73,6 +89,8 @@ def load_palette():
     if missing:
         raise SystemExit("couleurs absentes de %s : %s"
                          % (HA_PANEL_UI_COMMON, ", ".join(missing)))
+    m = re.search(r"#define\s+UI_CARD_ACCENT_W\s+(\d+)", src)
+    pal["_ACCENT_W"] = int(m.group(1)) if m else ACCENT_W_FALLBACK
     return pal, HA_PANEL_UI_COMMON
 
 
@@ -92,6 +110,7 @@ def snap565(rgb24):
 
 PAL, PAL_SRC = load_palette()
 _c = lambda name: snap565(PAL[name])
+ACCENT_W = PAL.get("_ACCENT_W", ACCENT_W_FALLBACK)
 
 BG        = _c("COL_BG")
 CARD      = _c("COL_CARD")
@@ -236,21 +255,63 @@ def label(d, xy, text, color=DIM, size=13, anchor="la", bold=False):
            fill=color, anchor=anchor)
 
 
-def sky(img, box, r=14):
-    """Carte (ou page) en dégradé bleu vertical, coins arrondis."""
+def _rgb(hexstr):
+    return [int(hexstr[i:i + 2], 16) for i in (1, 3, 5)]
+
+
+def mix(a, b, wa):
+    """Mélange "#rrggbb" : wa/255 de `a` + (255-wa)/255 de `b`.
+
+    Reprend ui_mix() du P4 (ha-panel/main/ui/ui_common.c) — même formule, pour
+    que les teintes dérivées (têtes de carte) soient identiques sur les deux
+    panneaux. Le résultat repasse par snap565 : une teinte calculée doit tomber
+    sur la grille comme les couleurs de la palette, sinon elle ressort tramée
+    sur un aplat."""
+    ra, rb = _rgb(a), _rgb(b)
+    v = [(ra[c] * wa + rb[c] * (255 - wa)) // 255 for c in range(3)]
+    return snap565((v[0] << 16) | (v[1] << 8) | v[2])
+
+
+def grad(img, box, top, bot, r=14):
+    """Dégradé vertical `top`→`bot`, coins arrondis, collé dans `img`."""
     x0, y0, x1, y1 = box
-    t = [int(SKY_T[i:i + 2], 16) for i in (1, 3, 5)]
-    b = [int(SKY_B[i:i + 2], 16) for i in (1, 3, 5)]
+    t, b = _rgb(top), _rgb(bot)
     gw, gh = x1 - x0, y1 - y0
-    grad = Image.new("RGB", (gw, gh))
-    gd = ImageDraw.Draw(grad)
+    g = Image.new("RGB", (gw, gh))
+    gd = ImageDraw.Draw(g)
     for y in range(gh):
         k = y / float(gh - 1)
         gd.line((0, y, gw, y),
                 fill=tuple(int(round(t[c] + (b[c] - t[c]) * k)) for c in range(3)))
-    mask = Image.new("L", (gw, gh), 0)
-    ImageDraw.Draw(mask).rounded_rectangle((0, 0, gw - 1, gh - 1), radius=r, fill=255)
-    img.paste(grad, (x0, y0), mask)
+    m = Image.new("L", (gw, gh), 0)
+    ImageDraw.Draw(m).rounded_rectangle((0, 0, gw - 1, gh - 1), radius=r, fill=255)
+    img.paste(g, (x0, y0), m)
+
+
+def sky(img, box, r=14):
+    """Carte (ou page) en dégradé bleu vertical — page/carte Météo."""
+    grad(img, box, SKY_T, SKY_B, r)
+
+
+def accent_card(img, box, accent, r=12):
+    """Carte teintée : accent en tête fondu vers COL_CARD, recette du P4.
+
+    C'est `card()` de ha-panel/main/ui/ui_common.c:95 — mix(accent, COL_CARD,
+    UI_CARD_ACCENT_W) en haut, COL_CARD en bas. Ce qui donne aux tuiles
+    Lumières (jaune) et Chauffage (orange) leur dégradé, au lieu de l'aplat
+    COL_CARD qu'elles avaient ici."""
+    grad(img, box, mix(accent, CARD, ACCENT_W), CARD, r)
+
+
+def cols(n, margin=16, gap=10, width=None):
+    """`n` colonnes de largeur égale dans la zone VISIBLE (WU), pas dans W.
+
+    Renvoie [(x, largeur)] — utilisé par les rangées de trois cartes (actions
+    de cfg, préréglages de climate, métriques de weather) pour qu'elles restent
+    centrées sur ce que l'œil voit, cadre compris."""
+    total = (width if width is not None else WU) - 2 * margin
+    w = (total - gap * (n - 1)) // n
+    return [(margin + i * (w + gap), w) for i in range(n)]
 
 
 def new_bg():
@@ -267,28 +328,41 @@ def bg_boot():
     img, d = new_bg()
     stamp(img, (14, 12), "wifi", 20, DIM)
     label(d, (42, 22), "nspanel-ha", TXT, 15, "lm")
-    label(d, (W - 16, 22), "HOME ASSISTANT", FAINT, 11, "rm")
-    d.line((14, 40, W - 14, 40), fill=CARD2, width=1)
-    rail(d, 24, 272, W - 24, 14)                  # emplacement de jProg
+    label(d, (WU - 16, 22), "HOME ASSISTANT", FAINT, 11, "rm")
+    d.line((14, 40, WU - 14, 40), fill=CARD2, width=1)
+    rail(d, 24, 272, WU - 24, 14)                 # emplacement de jProg
     return img
+
+
+# Tuiles de `home`, calées sur la zone visible : deux tuiles de largeur égale
+# entre M et WU-M. Ces valeurs sont le contrat avec l'Editor (positions des
+# objets posés dessus) ET avec le firmware (centre des anneaux, HOME_ARC_CX
+# dans main/ui/ui.c) — voir design/EDITOR-HOME.md.
+TILE_Y0, TILE_Y1 = 52, 190
+_tw = ((WU - 2 * M) - 17) // 2                    # 17 px de gouttière
+TILE_L = (M, TILE_Y0, M + _tw, TILE_Y1)           # Lumières
+TILE_R = (M + _tw + 17, TILE_Y0, WU - M, TILE_Y1)  # Chauffage
+CARD_WX = (M, 196, WU - M, 314)                   # carte Météo
+SLOT_HOME_LIGHT = (16, 99)                        # home.pLight, 64×64
 
 
 def bg_home():
     img, d = new_bg()
-    stamp(img, (444, 12), "cfg", 22, FAINT)       # mCfg
-    # Tuile Lumières — carte + en-tête gravés ; pLight (bilan on/off, 65/66)
-    # et les valeurs (tRoom, tLights) sont des objets Nextion posés dessus.
-    card(d, (8, 52, 232, 190), CARD, r=12)
+    stamp(img, (WU - 14 - 22, 12), "cfg", 22, FAINT)   # mCfg
+    # Tuile Lumières — dégradé jaune (accent COL_LIGHTS) + en-tête gravés ;
+    # pLight (bilan on/off, 65/66) et les valeurs (tRoom, tLights) sont des
+    # objets Nextion posés dessus.
+    accent_card(img, TILE_L, LIGHTS)
     stamp(img, (16, 60), "light", 20, LIGHTS)
     label(d, (42, 70), "Lumières", LIGHTS, 14, "lm")
-    # Tuile Chauffage — carte + en-tête gravés ; les anneaux sont dessinés à
-    # l'exécution par le firmware (nx_draw_arc, main/ui/ui.c), pas ici : ils
-    # portent une valeur. Ne rien poser au centre (voir design/EDITOR-HOME.md).
-    card(d, (248, 52, 472, 190), CARD, r=12)
-    stamp(img, (256, 60), "heat", 20, HEAT)
-    label(d, (282, 70), "Chauffage", HEAT, 14, "lm")
-    # Météo : seule carte en dégradé de la page.
-    sky(img, (8, 196, 472, 314))
+    # Tuile Chauffage — dégradé orange (accent COL_HEAT) ; les anneaux sont
+    # dessinés à l'exécution par le firmware (nx_draw_arc, main/ui/ui.c), pas
+    # ici : ils portent une valeur. Ne rien poser au centre (EDITOR-HOME.md).
+    accent_card(img, TILE_R, HEAT)
+    stamp(img, (TILE_R[0] + 8, 60), "heat", 20, HEAT)
+    label(d, (TILE_R[0] + 34, 70), "Chauffage", HEAT, 14, "lm")
+    # Météo : carte en dégradé bleu.
+    sky(img, CARD_WX)
     stamp(img, (20, 206), "weather", 20, TXT)
     label(d, (46, 216), "Météo", TXT, 15, "lm")
     return img
@@ -297,28 +371,31 @@ def bg_home():
 def bg_lights():
     img, d = new_bg()
     stamp(img, (10, 10), "prev", 24, DIM)         # bRoomPrev
-    stamp(img, (446, 10), "next", 24, DIM)        # bRoomNext
-    d.line((8, 42, W - 8, 42), fill=CARD2, width=1)
+    stamp(img, (WU - 10 - 24, 10), "next", 24, DIM)   # bRoomNext
+    d.line((M, 42, WU - M, 42), fill=CARD2, width=1)
     for i in range(8):
         y = 50 + i * 29
-        card(d, (8, y, 472, y + 26), CARD, r=6)
-        rail(d, 250, y + 9, 400)                  # hN<i>
-        d.rounded_rectangle((418, y + 5, 462, y + 21), radius=8, fill=CARD2)  # bN<i>
-    stamp(img, (300, 288), "power", 24, DIM)      # bAll
-    label(d, (332, 300), "Tout éteindre", DIM, 13, "lm")
+        card(d, (M, y, WU - M, y + 26), CARD, r=6)
+        rail(d, 250, y + 9, 395)                  # hN<i>
+        d.rounded_rectangle((WU - 18 - 44, y + 5, WU - 18, y + 21),
+                            radius=8, fill=CARD2)  # bN<i>
+    stamp(img, (295, 288), "power", 24, DIM)      # bAll
+    label(d, (327, 300), "Tout éteindre", DIM, 13, "lm")
     return img
 
 
 def bg_climate():
     img, d = new_bg()
-    d.arc((150, 30, 330, 210), start=135, end=405, fill=HEAT_SOFT, width=12)
-    d.arc((168, 48, 312, 192), start=135, end=205, fill=HEAT, width=9)
+    cx = WU // 2                                  # centré sur le VISIBLE, pas sur W
+    d.arc((cx - 90, 30, cx + 90, 210), start=135, end=405, fill=HEAT_SOFT, width=12)
+    d.arc((cx - 72, 48, cx + 72, 192), start=135, end=205, fill=HEAT, width=9)
     stamp(img, (40, 100), "minus", 32, HEAT)      # bDn
-    stamp(img, (408, 100), "plus", 32, HEAT)      # bUp
-    for x, glyph, col, txt in ((20, "eco", GREEN, "Absent"),
-                               (170, "frost", HOME, "Hors gel"),
-                               (320, "boost", HEAT, "Auto")):
-        card(d, (x, 268, x + 140, 312), CARD, r=8)
+    stamp(img, (WU - 40 - 32, 100), "plus", 32, HEAT)   # bUp
+    for (x, w), (glyph, col, txt) in zip(cols(3),
+                                         (("eco", GREEN, "Absent"),
+                                          ("frost", HOME, "Hors gel"),
+                                          ("boost", HEAT, "Auto"))):
+        card(d, (x, 268, x + w, 312), CARD, r=8)
         stamp(img, (x + 14, 282), glyph, 22, col)
         label(d, (x + 44, 291), txt, DIM, 13, "lm")
     return img
@@ -326,33 +403,44 @@ def bg_climate():
 
 def bg_weather():
     img, d = new_bg()
-    sky(img, (0, 0, W, H), r=0)                   # page entière en dégradé
+    # Dégradé sur toute la LARGEUR RÉELLE (W, pas WU) : les 5 px masqués n'ont
+    # pas d'information, mais les laisser noirs ferait un liseré si le cadre
+    # est un peu moins couvrant que prévu. Seul le contenu se replie sur WU.
+    sky(img, (0, 0, W, H), r=0)
     stamp(img, (16, 12), "weather", 20, TXT)
     label(d, (42, 22), "Météo", TXT, 15, "lm")
-    for x, txt in ((8, "HUMIDITÉ"), (168, "VENT"), (328, "PRESSION")):
+    for (x, _w), txt in zip(cols(3), ("HUMIDITÉ", "VENT", "PRESSION")):
         label(d, (x + 12, 156), txt, DIM, 11)
-    d.line((8, 146, W - 8, 146), fill=NAVY, width=1)
-    d.line((8, 190, W - 8, 190), fill=NAVY, width=1)
+    d.line((M, 146, WU - M, 146), fill=NAVY, width=1)
+    d.line((M, 190, WU - M, 190), fill=NAVY, width=1)
     return img
 
 
 def bg_cfg():
+    """cfg — retour, carte pièce (prev/next), luminosité/veille (curseurs
+    natifs Nextion, pas de rail dessiné : bco du Slider en tient lieu),
+    diagnostics, actions, version. Voir design/EDITOR-CFG.md pour la géométrie
+    exacte des composants posés par-dessus (bRet, tRoom, hDim, hSleep…)."""
     img, d = new_bg()
-    for i, txt in enumerate(("LUMINOSITÉ", "VEILLE")):   # hDim, hSleep
-        y = 10 + i * 44
-        label(d, (16, y + 4), txt, DIM, 12)
-        rail(d, 16, y + 24, W - 16, 10)
-    for i, txt in enumerate(("SSID", "IP", "HA")):       # tSsid, tIp, tHa
-        y = 106 + i * 34
-        card(d, (8, y, 472, y + 28), CARD, r=6)
+    stamp(img, (14, 17), "prev", 24, TXT)                      # bRet
+    card(d, (56, 6, WU - M, 52), CARD, r=8)                    # tRoom
+    label(d, (66, 16), "PIÈCE", DIM, 11)
+    stamp(img, (WU - 66 - 24, 16), "prev", 24, TXT)            # bRoomPrev
+    stamp(img, (WU - 26 - 24, 16), "next", 24, TXT)            # bRoomNext
+    label(d, (16, 66), "LUMINOSITÉ", DIM, 12)                  # hDim
+    label(d, (16, 112), "VEILLE", DIM, 12)                     # hSleep
+    for i, txt in enumerate(("SSID", "IP", "HA")):             # tSsid, tIp, tHa
+        y = 156 + i * 31
+        card(d, (M, y, WU - M, y + 28), CARD, r=6)
         label(d, (18, y + 14), txt, DIM, 12, "lm")
-    for x, glyph, col, txt in ((20, "cfg", HOME, "OTA"),
-                               (170, "weather", HOME, "TFT"),
-                               (320, "power", RED, "Reboot")):
-        card(d, (x, 216, x + 140, 258), CARD, r=8)
-        stamp(img, (x + 14, 226), glyph, 22, col)
-        label(d, (x + 44, 237), txt, DIM, 13, "lm")
-    card(d, (8, 288, 472, 312), CARD2, r=6)             # tVer
+    for (x, w), (glyph, col, txt) in zip(cols(3),
+                                         (("cfg", HOME, "OTA"),
+                                          ("weather", HOME, "TFT"),
+                                          ("power", RED, "Reboot"))):
+        card(d, (x, 252, x + w, 292), CARD, r=8)
+        stamp(img, (x + 14, 262), glyph, 22, col)
+        label(d, (x + 44, 272), txt, DIM, 13, "lm")
+    card(d, (M, 296, WU - M, 316), CARD2, r=6)                 # tVer
     return img
 
 
@@ -418,10 +506,15 @@ def main(outdir):
              % (c, SLOT_HOME_WX))
 
     for suffix, col in (("off", DIM), ("on", LIGHTS)):          # 65–66
-        # Aplatie sur CARD, pas BG : pLight est posée sur la tuile Lumières
-        # (fond de tuile), pas sur le noir de page.
-        emit(icon_on(CARD, "light", 64, col), "home_light64_" + suffix, "home",
-             "pLight", "ampoule de la tuile Lumières, %s" % suffix)
+        # Aplatie sur le MORCEAU EXACT de la tuile Lumières qu'elle recouvre :
+        # depuis que cette tuile est en dégradé (accent_card), un aplat CARD
+        # laisserait un rectangle plus sombre autour de l'ampoule. pLight
+        # devient donc liée à sa position, comme pWx — la déplacer dans
+        # l'Editor oblige à corriger SLOT_HOME_LIGHT et à régénérer.
+        emit(icon_on_patch(pages["bg_home"], SLOT_HOME_LIGHT, "light", 64, col),
+             "home_light64_" + suffix, "home", "pLight",
+             "ampoule de la tuile Lumières, %s — aplatie sur le dégradé en %s"
+             % (suffix, SLOT_HOME_LIGHT))
 
     with open(os.path.join(outdir, "manifest.csv"), "w", newline="",
               encoding="utf-8") as f:

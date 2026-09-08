@@ -16,10 +16,9 @@ static const char *TAG = "settings";
 
 static char s_default_room[48];
 static int  s_brightness_pct = 80;
-/* Désactivée par défaut : pas encore de page cfg (phase 4) pour la
- * reconfigurer depuis l'écran, donc pas de moyen de sortir d'une veille
- * gênante autrement que par le portail web. À reconsidérer quand cfg existe. */
-static int  s_sleep_enabled  = 0;
+/* Activée par défaut : la page cfg permet de la désactiver depuis l'écran
+ * (curseur hSleep à 0), donc plus besoin du portail web pour en sortir. */
+static int  s_sleep_enabled  = 1;
 static int  s_sleep_timeout_sec = 60;
 static int  s_ntc_offset_tenths = -40;   /* -4.0 °C : repli raisonnable avant tout réglage */
 

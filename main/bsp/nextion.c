@@ -464,6 +464,24 @@ bool nx_vis(nx_obj_t o, bool on)
     return true;
 }
 
+/* Lecture, symétrique de nx_set_val() : même attribut déclaré, même nom
+ * qualifié. rx_pause()/rx_resume() sont indispensables ici — contrairement à
+ * get_sync() employée par nextion_probe() (déjà sous pause pour toute la
+ * séquence de sondage), un appel isolé depuis le traitement d'un événement
+ * tactile tourne concurremment à rx_task() sur le même UART : sans la pause,
+ * rx_task() pourrait consommer la trame 0x71 avant get_sync(). */
+bool nx_get_num(nx_obj_t o, int32_t *out)
+{
+    if (!nx_present(o)) return false;
+    char q[40];
+    nx_get_result_t r;
+    rx_pause();
+    bool ok = get_sync(qname(o, q, sizeof(q)), s_obj_meta[o].attr, &r) && r.is_num;
+    rx_resume();
+    if (ok) *out = r.num;
+    return ok;
+}
+
 bool nx_page(nx_page_t p)
 {
     if (p < 0 || p >= NXP_COUNT) return false;

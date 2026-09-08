@@ -85,6 +85,8 @@ NX_OBJ(WX_PIC3,         NXP_WEATHER, "pD3",    "pic")
 
 /* --- cfg (ancre : tRoom) --- */
 NX_OBJ(CFG_ROOM,        NXP_CFG,     "tRoom",  "txt")
+NX_OBJ(CFG_DIM_TXT,     NXP_CFG,     "tDim",   "txt")
+NX_OBJ(CFG_SLEEP_TXT,   NXP_CFG,     "tSleep", "txt")
 NX_OBJ(CFG_SSID,        NXP_CFG,     "tSsid",  "txt")
 NX_OBJ(CFG_IP,          NXP_CFG,     "tIp",    "txt")
 NX_OBJ(CFG_HA,          NXP_CFG,     "tHa",    "txt")

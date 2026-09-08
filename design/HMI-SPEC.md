@@ -10,6 +10,18 @@ modification ici doit se refléter dans ces deux fichiers (et réciproquement).
 - **Orientation : 480×320 paysage** — résolution native de la dalle, et ce que
   le projet Editor utilise déjà. Figé : toutes les positions des pages ci-dessous
   et toutes les tailles d'images (`design/PROMPT-IMAGES.md`) en dépendent.
+- **Les ~25 px de droite sont masqués par le cadre du boîtier.** Ces colonnes
+  existent dans la dalle, dans les images et dans les coordonnées Nextion, mais
+  ne sont jamais visibles. Les images gardent donc leur **taille native
+  480×320** — les redimensionner désalignerait tout — et c'est la **mise en
+  page** qui se replie sur une largeur utile de **455 px** (`MASK_R` / `WU`
+  dans `gen_images.py`), avec la même marge de 8 px à droite qu'à gauche : rien
+  d'utile au-delà de `x = 447`. Vaut aussi pour les composants posés dans
+  l'Editor (voir `EDITOR-HOME.md`, `EDITOR-CFG.md`) et pour le firmware, dont
+  le centre des anneaux de `home` (`HOME_ARC_CX`, `main/ui/ui.c`) suit celui de
+  la tuile Chauffage recadrée. Seule exception assumée : le dégradé plein écran
+  de `weather` est peint sur les 480 px, pour qu'un cadre un peu moins couvrant
+  que prévu ne révèle pas de liseré noir.
 - **Reparse mode : rien à faire dans l'Editor.** Ce n'est pas une option de
   compilation mais un état d'exécution (`recmod`) activé par le programme du
   `.tft` chargé — celui d'origine Sonoff le réaffirme en continu. C'est le
@@ -76,7 +88,7 @@ suit et le firmware affiche la mauvaise image.
 | 29 | garde | 1×1 |
 | 30–55 | icônes d'interface, par paires inactive/active | 32×32 |
 | 56–64 | icône météo de `home.pWx` (aplatie sur la carte dégradée) | 64×64 |
-| 65–66 | ampoule de la tuile Lumières (`pLight`), éteinte/allumée — aplatie sur `COL_CARD` | 64×64 |
+| 65–66 | ampoule de la tuile Lumières (`pLight`), éteinte/allumée — aplatie sur le dégradé de la tuile en `16,99` | 64×64 |
 
 Les deux blocs météo suivent le **même ordre de conditions** — `sunny`,
 `clear-night`, `partlycloudy`, `cloudy`, `rainy`, `snowy`, `lightning`,
@@ -96,9 +108,18 @@ de chaque page — coût nul en ressources.
 
 Faute de canal alpha, une icône posée sur un dégradé est aplatie sur le
 **morceau exact de fond qu'elle recouvre** : elle est liée à sa position.
-Déplacer `pWx` (`26,232` sur `home`), `pNow` (`24,54`) ou la bande des `pD*`
-(`y=236`) dans l'Editor oblige à corriger `SLOT_*` dans `gen_images.py` et à
-régénérer, sinon un rectangle plus clair apparaît autour du glyphe.
+Déplacer `pWx` (`26,232` sur `home`), `pLight` (`16,99`), `pNow` (`24,54`) ou
+la bande des `pD*` (`y=236`) dans l'Editor oblige à corriger `SLOT_*` dans
+`gen_images.py` et à régénérer, sinon un rectangle de la mauvaise teinte
+apparaît autour du glyphe.
+
+Les tuiles Lumières et Chauffage de `home` sont elles-mêmes en **dégradé
+d'accent** (jaune `COL_LIGHTS`, orange `COL_HEAT`), suivant la recette du
+panneau P4 : `mix(accent, COL_CARD, UI_CARD_ACCENT_W)` en haut fondu vers
+`COL_CARD` en bas, le poids étant lu dans `ui_common.h` à la génération comme
+la palette. Corollaire pour l'Editor : **tout Text posé sur une tuile doit être
+en `sta = crop image` avec le bon `picc`**, un `solid color` y laisserait un
+rectangle visible sur le dégradé.
 
 Contrôle après upload — la seule preuve que l'allocation tient :
 ```
@@ -209,10 +230,19 @@ sans `bN<i>` n'est simplement pas rendue.
 | `tRoom` | Text | pièce par défaut (ancre) |
 | `bRoomPrev`/`bRoomNext` | Button | changer la pièce par défaut (hotspots) |
 | `hDim` | Slider | luminosité écran |
-| `hSleep` | Slider | délai de veille |
+| `tDim` | Text | valeur courante de `hDim` (« 80 % ») |
+| `hSleep` | Slider | délai de veille (0 = désactivée) |
+| `tSleep` | Text | valeur courante de `hSleep` (« 60 s » / « désactivée ») |
 | `tSsid`, `tIp`, `tHa` | Text | diagnostic réseau/HA |
 | `bOta`, `bTft`, `bReboot` | Button | actions (hotspots) |
 | `tVer` | Text | version firmware |
+| `bRet` | Button | retour à `home` (hotspot) |
+
+Les Sliders `hDim`/`hSleep` doivent cocher **Send Component ID** sur *Touch
+Release Event* uniquement (pas Press) : le firmware relit leur `.val` par un
+aller-retour `get` en réponse à l'événement, et pendant le glissé la valeur
+n'est pas stable — cf. `main/bsp/nextion.c:nx_get_num` et
+`design/EDITOR-CFG.md`.
 
 La saisie de l'URL/token HA reste sur le **portail web** (`http://<ip>/`),
 pas sur cette page — pas de clavier tactile pour un jeton de 180 caractères.

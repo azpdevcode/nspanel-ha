@@ -12,7 +12,8 @@
  * non sondée, donc déclarer la navigation avant d'avoir dessiné les pages ne
  * casse rien.
  */
-NX_NAV(NXP_HOME, 18, NXP_LIGHTS)
-NX_NAV(NXP_HOME, 19, NXP_CLIMATE)
-NX_NAV(NXP_HOME, 20, NXP_WEATHER)
-NX_NAV(NXP_HOME, 21, NXP_CFG)
+NX_NAV(NXP_HOME, 10, NXP_LIGHTS)
+NX_NAV(NXP_HOME, 11, NXP_CLIMATE)
+NX_NAV(NXP_HOME, 12, NXP_WEATHER)
+NX_NAV(NXP_HOME, 13, NXP_CFG)
+NX_NAV(NXP_CFG,  15, NXP_HOME)   /* bRet — prédiction, à corriger après le premier upload (voir design/EDITOR-CFG.md) */

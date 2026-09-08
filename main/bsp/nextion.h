@@ -139,6 +139,16 @@ bool nx_set_val(nx_obj_t o, int32_t v);
 bool nx_set_pco(nx_obj_t o, uint16_t rgb565);
 bool nx_vis(nx_obj_t o, bool on);
 
+/**
+ * @brief Lit l'attribut numérique déclaré pour l'objet (`val`, `pic`).
+ *
+ * Aller-retour synchrone sur le bus écran (~10 ms, borné par NX_BUS_WAIT_MS) :
+ * réservé au traitement d'un événement tactile (ex. relâche d'un Slider),
+ * jamais à un tick périodique — ça sérialiserait la tâche ui sur l'UART.
+ * false si l'objet est absent du .tft ou si l'écran ne répond pas.
+ */
+bool nx_get_num(nx_obj_t o, int32_t *out);
+
 /** @brief Change de page. No-op (false) si la page est absente du .tft. */
 bool nx_page(nx_page_t p);
 

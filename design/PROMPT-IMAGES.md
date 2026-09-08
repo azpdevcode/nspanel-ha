@@ -15,7 +15,9 @@ table. La check-list de contrôle est en fin de fichier.
 ## Prompt à copier
 
 Tu es graphiste d'interface embarquée. Tu produis un jeu complet d'images pour un écran
-**Nextion Discovery NX4832F035** (3,5", **480×320 paysage**, dalle résistive), qui sert
+**Nextion Discovery NX4832F035** (3,5", **480×320 paysage**, dalle résistive, dont les
+**25 px de droite sont masqués par le cadre** : les images font bien 480 px de large, mais
+aucun contenu utile ne doit dépasser `x = 447`), qui sert
 d'interface murale Home Assistant. La capture jointe est l'interface existante d'un autre
 panneau du même foyer (CrowPanel P4, LVGL) : **c'est la référence de design** — même
 langage visuel, mêmes cartes, même hiérarchie typographique. Tu la suis pour la

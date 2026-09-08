@@ -6,8 +6,16 @@ Recette pas à pas pour construire la page 1 (`home`) à partir des PNG de
 l'allocation des `pic` id.
 
 Tout est en **480×320 paysage**. Les coordonnées ci-dessous sont exactes : le
-fond `01_bg_home.png` a été dessiné avec elles, et l'icône `pWx` est aplatie sur
-le morceau de dégradé situé en `26,232` — la déplacer casse le rendu.
+fond `01_bg_home.png` a été dessiné avec elles, et les icônes `pWx` (`26,232`)
+et `pLight` (`16,99`) sont aplaties sur le morceau de dégradé qu'elles
+recouvrent — les déplacer casse le rendu.
+
+**Les ~25 px de droite de la dalle sont masqués par le cadre du boîtier.** La
+largeur utile est donc **455 px**, pas 480 : rien d'utile ne doit dépasser
+`x = 447` (marge de page de 8 px, comme à gauche). Les images gardent leur
+taille native 480×320 — c'est la mise en page qui se replie (`MASK_R`/`WU` dans
+`design/images/gen_images.py`). Les positions ci-dessous en tiennent déjà
+compte.
 
 ## 0. Prérequis
 
@@ -32,20 +40,39 @@ le morceau de dégradé situé en `26,232` — la déplacer casse le rendu.
 | `pic` | `1` (`01_bg_home.png`) |
 
 Ce qui est **déjà dans le fond** et ne doit pas être recréé : l'engrenage
-`mCfg` (444,12), la tuile Lumières — carte arrondie (8,52)→(232,190), icône et
-libellé « Lumières » gravés en (16,60) —, la tuile Chauffage — carte arrondie
-(248,52)→(472,190), icône et libellé « Chauffage » gravés en (256,60) —, et la
-carte météo en dégradé (8,196)→(472,314) avec son icône et son titre « Météo ».
+`mCfg` (419,12), la tuile Lumières — carte arrondie (8,52)→(219,190) **en
+dégradé jaune**, icône et libellé « Lumières » gravés en (16,60) —, la tuile
+Chauffage — carte arrondie (236,52)→(447,190) **en dégradé orange**, icône et
+libellé « Chauffage » gravés en (244,60) —, et la carte météo en dégradé bleu
+(8,196)→(447,314) avec son icône et son titre « Météo ».
+
+Les deux tuiles suivent la recette d'accent du P4 (`card()` de
+`ha-panel/main/ui/ui_common.c`) : `mix(accent, COL_CARD, UI_CARD_ACCENT_W)` en
+haut, fondu vers `COL_CARD` en bas — le poids est lu dans `ui_common.h` à la
+génération, comme la palette. Conséquence pour l'Editor : **tout Text posé sur
+une tuile doit être en `sta = crop image`, `picc = 1`** (voir plus bas), sinon
+un aplat `COL_CARD` trahit un rectangle sur le dégradé.
 
 **Les anneaux de chauffage ne sont PAS dans le fond.** Ils portent une valeur
 (température mesurée / consigne) et sont dessinés à l'exécution par le
 firmware (`nx_draw_arc()`, `main/ui/nx_draw.c`, appelé depuis
 `home_arcs_paint()` dans `main/ui/ui.c`) — en chapelet de disques `cirs`,
 Nextion n'ayant pas de primitive d'arc. Géométrie, à ne rien poser dessus :
-centre `(360,130)`, anneau extérieur (mesure) rayon 52 épaisseur 9, anneau
-intérieur (consigne) rayon 34 épaisseur 7, plage 0..50 °C sur 270° à partir de
-135° (identique à la jauge du panneau P4). Si la tuile Chauffage bouge dans
-l'Editor, corriger `HOME_ARC_*` dans `ui.c` en conséquence.
+centre `(290,138)` — décalé à **gauche** de la tuile et **abaissé** sous le
+titre « Chauffage » (icône + libellé, `y≈52..80`) —, anneau extérieur (mesure)
+rayon 40 épaisseur 8, anneau intérieur (consigne) rayon 25 épaisseur 6, plage
+0..50 °C sur 270° à partir de 135°. Emprise : x 246–334, y 94–182, avec marge
+sur les 4 bords de la tuile (236–447 / 52–190) et sous le titre (gap ~14 px).
+
+Plus petit et décalé par rapport à la jauge du panneau P4 (dont il reprend le
+principe) : **`tTemp`/`tSet` sont posés à DROITE de l'anneau, pas dedans** —
+voir tableau ci-dessous. Un ancien montage centré dans le trou débordait du
+rayon sûr (coin de texte à ~38 px pour un bord intérieur sûr à ~30 px) ; le
+Nextion n'ayant pas de framebuffer partagé (contrairement au P4/LVGL), chaque
+réécriture de texte — y compris la resynchro périodique de `home_page_tick()`,
+même sans changement de valeur — repeignait son rectangle et effaçait
+l'anneau dessous. Si la tuile Chauffage bouge dans l'Editor, corriger
+`HOME_ARC_*` dans `ui.c` en conséquence.
 
 ## 2. Composants, dans l'ordre de création
 
@@ -63,19 +90,25 @@ ensuite, ce qui donne 12..15.
 | # | `cid` | `objname` | Type | x | y | w | h | Police | `pco` | Alignement |
 |---|---|---|---|---|---|---|---|---|---|---|
 | 1 | — | `tClock` | Text | 14 | 4 | 150 | 44 | f2 | 61342 | gauche / centré vert. |
-| 2 | — | `tDate` | Text | 176 | 20 | 180 | 20 | f0 | 35988 | gauche / centré |
-| 3 | — | `pLight` | Picture | 24 | 100 | 64 | 64 | — | — | `pic` = 65 |
-| 4 | — | `tRoom` | Text | 100 | 106 | 124 | 22 | f0 | 61342 | gauche / centré |
-| 5 | — | `tLights` | Text | 100 | 132 | 124 | 22 | f0 | 35988 | gauche / centré |
-| 6 | — | `tTemp` | Text | 324 | 114 | 72 | 26 | f1 | 62735 | centré / centré |
-| 7 | — | `tSet` | Text | 330 | 142 | 60 | 18 | f0 | 60231 | centré / centré |
+| 2 | — | `tDate` | Text | 220 | 14 | 165 | 20 | f0 | 35988 | droite / centré |
+| 3 | — | `pLight` | Picture | 16 | 99 | 64 | 64 | — | — | `pic` = 65 |
+| 4 | — | `tRoom` | Text | 88 | 126 | 128 | 26 | f1 | 65535 | gauche / centré |
+| 5 | — | `tLights` | Text | 88 | 156 | 128 | 26 | f0 | 35988 | gauche / centré |
+| 6 | — | `tTemp` | Text | 344 | 118 | 90 | 26 | f1 | 62735 | centré / centré |
+| 7 | — | `tSet` | Text | 344 | 148 | 90 | 18 | f0 | 60231 | centré / centré |
 | 8 | — | `pWx` | Picture | 26 | 232 | 64 | 64 | — | — | `pic` = 56 |
 | 9 | — | `tWxT` | Text | 100 | 232 | 160 | 56 | f2 | 61342 | gauche / centré |
 | 10 | — | `tWxC` | Text | 100 | 290 | 250 | 20 | f0 | 61342 | gauche / centré |
-| 11 | 12 | `mLight` | Hotspot | 8 | 52 | 224 | 138 | — | — | — |
-| 12 | 13 | `mHeat` | Hotspot | 248 | 52 | 224 | 138 | — | — | — |
-| 13 | 14 | `mWx` | Hotspot | 8 | 196 | 464 | 118 | — | — | — |
-| 14 | 15 | `mCfg` | Hotspot | 424 | 0 | 56 | 48 | — | — | — |
+| 11 | 10 | `mLight` | Hotspot | 0 | 36 | 224 | 156 | — | — | — |
+| 12 | 11 | `mHeat` | Hotspot | 228 | 36 | 227 | 156 | — | — | — |
+| 13 | 12 | `mWx` | Hotspot | 8 | 196 | 439 | 118 | — | — | — |
+| 14 | 13 | `mCfg` | Hotspot | 407 | 0 | 48 | 36 | — | — | — |
+
+**Ces valeurs (géométrie et `cid`) sont celles du `.HMI` réellement monté au
+09/2026** — l'ancienne barre de navigation basse `p0..p3`/`t0..t3` a été
+retirée, ce qui a renuméroté les hotspots. `main/ui/nx_nav.def` doit rester
+synchrone avec cette colonne `cid` ; en cas de doute, se fier au fichier, pas à
+ce document, et corriger l'un ou l'autre pour qu'ils concordent.
 
 `pco` est donné en RGB565 décimal, déjà arrondi à la grille 565 comme les
 images (`COL_TXT` 61342, `COL_TXT_DIM` 35988, `COL_HEAT_SOFT` 62735,
@@ -83,21 +116,21 @@ images (`COL_TXT` 61342, `COL_TXT_DIM` 35988, `COL_HEAT_SOFT` 62735,
 `COL_HEAT_SOFT_565`/`COL_HEAT_565` dans `main/ui/ui.c`, sinon le texte et
 l'anneau qu'il annote n'ont pas la même couleur).
 
-`tTemp`/`tSet` sont volontairement étroits : leurs coins doivent rester à
-l'intérieur de l'anneau intérieur (rayon 34, bord externe ~37 avec
-l'épaisseur), sinon le texte mord sur les disques dessinés par le firmware.
+`tTemp`/`tSet` sont posés à **droite** de l'anneau (x≥344), pas dans son trou :
+l'anneau occupe x:246–334, donc aucune contrainte de largeur pour ces deux
+champs — contrairement à un ancien montage centré dans le trou, qui débordait
+du rayon sûr et se faisait effacer par la resynchro périodique du texte (voir
+§1). Garder une marge malgré tout (x+w ≤ 439, bord droit de la tuile − 8) pour
+ne pas déborder de la carte.
 
 ### Fond de chaque composant : `sta` = **Crop Image**, `picc` = **1**
 
 Pour **tous** les Text ci-dessus, mettre `sta` à `crop image` et `picc` à `1`.
 C'est ce qui fait qu'un texte se redessine sur les pixels réels du fond au lieu
 d'un rectangle de couleur. Indispensable sur la carte météo (`tWxT`, `tWxC`) où
-le fond est un dégradé, et maintenant aussi sur `tTemp`/`tSet` : le firmware y
-dessine des disques par-dessus le fond entre deux écritures de texte, un
-`sta = solid color` y laisserait un pavé de la mauvaise couleur visible tant
-que l'objet n'a pas été réécrit. Sur le noir plat (`tClock`, `tDate`…) ça ne se
-voit pas, mais autant garder la même règle partout — sinon un déplacement de
-2 px trahit le pavé.
+le fond est un dégradé ; sur le noir plat (`tClock`, `tDate`, `tTemp`, `tSet`…)
+ça ne se voit pas, mais autant garder la même règle partout — sinon un
+déplacement de 2 px trahit le pavé.
 
 Les Picture (`pLight`, `pWx`) n'ont pas de `sta` : l'aplatissement est déjà dans
 le PNG.
@@ -125,13 +158,15 @@ l'Editor — la page cible passerait devant un `.tft` partiel et court-circuiter
 |---|---|---|---|
 | 1 | `01_bg_home.png` | fond de page | 480×320, tuiles + carte météo, sans les anneaux |
 | 56..64 | `56_home_wx64_*.png` | `pWx` | ordre `sunny, clear-night, partlycloudy, cloudy, rainy, snowy, lightning, windy, fog` — le firmware écrit `56 + index` |
-| 65 / 66 | `65_home_light64_off.png` / `66_..._on.png` | `pLight` | aplaties sur `COL_CARD` (fond de la tuile Lumières) |
+| 65 / 66 | `65_home_light64_off.png` / `66_..._on.png` | `pLight` | aplaties sur le dégradé de la tuile Lumières pris en `16,99` |
 
-`pWx` est le seul cas lié à sa position : son PNG contient le morceau de dégradé
-de la carte pris en `26,232`. Si la carte ou l'icône bouge, corriger
-`SLOT_HOME_WX` dans `gen_images.py` et régénérer, sinon un rectangle plus clair
-apparaît autour du glyphe. `pLight` est aplatie sur un aplat (`COL_CARD`) : elle
-se déplace librement dans la tuile sans qu'il faille régénérer.
+**`pWx` et `pLight` sont tous deux liés à leur position** : leur PNG contient le
+morceau exact de dégradé qu'ils recouvrent — la carte météo en `26,232` pour
+`pWx`, la tuile Lumières en `16,99` pour `pLight`. Si la carte, la tuile ou
+l'icône bouge, corriger `SLOT_HOME_WX` / `SLOT_HOME_LIGHT` dans `gen_images.py`
+et régénérer, sinon un rectangle de la mauvaise teinte apparaît autour du
+glyphe. (`pLight` se déplaçait librement tant que la tuile Lumières était un
+aplat `COL_CARD` ; ce n'est plus vrai depuis qu'elle est en dégradé.)
 
 ## 4. Ce que fait le firmware une fois le `.tft` en place
 
