@@ -318,6 +318,15 @@ static esp_err_t post_nx(httpd_req_t *req)
         window = (uint32_t)atoi(tmp);
     if (window > 3000) window = 3000;
 
+    /* freeze=1/0 : suspend/reprend ui_task (voir ui_freeze()) le temps d'une
+     * manipulation manuelle (ex. touch_j) — sinon la resynchronisation
+     * périodique de la page affichée réécrit par-dessus tout mode spécial
+     * déclenché ici. Appliqué AVANT la commande de cet appel, pour pouvoir
+     * geler et envoyer `cmd` en une seule requête (`freeze=1&cmd=touch_j`) ;
+     * pour dégeler, un appel séparé `freeze=0` sans cmd suffit. */
+    bool freeze_set = httpd_query_key_value(raw, "freeze", tmp, sizeof(tmp)) == ESP_OK;
+    if (freeze_set) ui_freeze(atoi(tmp) != 0);
+
     uint8_t rx[256];
     size_t n = nx_raw_exchange(cmd, baud, rx, sizeof(rx), window);
 
@@ -333,6 +342,7 @@ static esp_err_t post_nx(httpd_req_t *req)
     cJSON_AddNumberToObject(root, "window_ms", (double)window);
     cJSON_AddNumberToObject(root, "rx_len", (double)n);
     cJSON_AddStringToObject(root, "rx_hex", hex);
+    if (freeze_set) cJSON_AddBoolToObject(root, "ui_frozen", atoi(tmp) != 0);
     char *out = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
     if (!out) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "json");

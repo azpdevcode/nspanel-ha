@@ -10,9 +10,9 @@ fond `01_bg_home.png` a été dessiné avec elles, et les icônes `pWx` (`26,232
 et `pLight` (`16,99`) sont aplaties sur le morceau de dégradé qu'elles
 recouvrent — les déplacer casse le rendu.
 
-**Les ~25 px de droite de la dalle sont masqués par le cadre du boîtier.** La
-largeur utile est donc **455 px**, pas 480 : rien d'utile ne doit dépasser
-`x = 447` (marge de page de 8 px, comme à gauche). Les images gardent leur
+**Les ~32 px de droite de la dalle sont masqués par le cadre du boîtier.** La
+largeur utile est donc **448 px**, pas 480 : rien d'utile ne doit dépasser
+`x = 440` (marge de page de 8 px, comme à gauche). Les images gardent leur
 taille native 480×320 — c'est la mise en page qui se replie (`MASK_R`/`WU` dans
 `design/images/gen_images.py`). Les positions ci-dessous en tiennent déjà
 compte.
@@ -40,18 +40,21 @@ compte.
 | `pic` | `1` (`01_bg_home.png`) |
 
 Ce qui est **déjà dans le fond** et ne doit pas être recréé : l'engrenage
-`mCfg` (419,12), la tuile Lumières — carte arrondie (8,52)→(219,190) **en
+`mCfg` (412,12), la tuile Lumières — carte arrondie (8,52)→(215,190) **en
 dégradé jaune**, icône et libellé « Lumières » gravés en (16,60) —, la tuile
-Chauffage — carte arrondie (236,52)→(447,190) **en dégradé orange**, icône et
+Chauffage — carte arrondie (232,52)→(440,190) **en dégradé orange**, icône et
 libellé « Chauffage » gravés en (244,60) —, et la carte météo en dégradé bleu
-(8,196)→(447,314) avec son icône et son titre « Météo ».
+marine (8,196)→(440,314) avec son icône et son titre « Météo ».
 
-Les deux tuiles suivent la recette d'accent du P4 (`card()` de
-`ha-panel/main/ui/ui_common.c`) : `mix(accent, COL_CARD, UI_CARD_ACCENT_W)` en
-haut, fondu vers `COL_CARD` en bas — le poids est lu dans `ui_common.h` à la
-génération, comme la palette. Conséquence pour l'Editor : **tout Text posé sur
-une tuile doit être en `sta = crop image`, `picc = 1`** (voir plus bas), sinon
-un aplat `COL_CARD` trahit un rectangle sur le dégradé.
+Les trois tuiles (Lumières, Chauffage, Météo) suivent la recette d'accent du P4
+(`card()` de `ha-panel/main/ui/ui_common.c`) : `mix(accent, COL_CARD,
+UI_CARD_ACCENT_W)` en haut, fondu vers `COL_CARD` en bas — l'accent de la
+tuile Météo est `COL_NAVY` (bleu marine), aligné sur le rendu réel de la tuile
+Météo de l'accueil côté ha-panel, pas sur le dégradé `SKY_DAY_T/B` de la page
+`weather` dédiée. Le poids est lu dans `ui_common.h` à la génération, comme la
+palette. Conséquence pour l'Editor : **tout Text posé sur une tuile doit être
+en `sta = crop image`, `picc = 1`** (voir plus bas), sinon un aplat `COL_CARD`
+trahit un rectangle sur le dégradé.
 
 **Les anneaux de chauffage ne sont PAS dans le fond.** Ils portent une valeur
 (température mesurée / consigne) et sont dessinés à l'exécution par le
@@ -62,7 +65,7 @@ centre `(290,138)` — décalé à **gauche** de la tuile et **abaissé** sous l
 titre « Chauffage » (icône + libellé, `y≈52..80`) —, anneau extérieur (mesure)
 rayon 40 épaisseur 8, anneau intérieur (consigne) rayon 25 épaisseur 6, plage
 0..50 °C sur 270° à partir de 135°. Emprise : x 246–334, y 94–182, avec marge
-sur les 4 bords de la tuile (236–447 / 52–190) et sous le titre (gap ~14 px).
+sur les 4 bords de la tuile (232–440 / 52–190) et sous le titre (gap ~14 px).
 
 Plus petit et décalé par rapport à la jauge du panneau P4 (dont il reprend le
 principe) : **`tTemp`/`tSet` sont posés à DROITE de l'anneau, pas dedans** —
@@ -99,16 +102,23 @@ ensuite, ce qui donne 12..15.
 | 8 | — | `pWx` | Picture | 26 | 232 | 64 | 64 | — | — | `pic` = 56 |
 | 9 | — | `tWxT` | Text | 100 | 232 | 160 | 56 | f2 | 61342 | gauche / centré |
 | 10 | — | `tWxC` | Text | 100 | 290 | 250 | 20 | f0 | 61342 | gauche / centré |
-| 11 | 10 | `mLight` | Hotspot | 0 | 36 | 224 | 156 | — | — | — |
-| 12 | 11 | `mHeat` | Hotspot | 228 | 36 | 227 | 156 | — | — | — |
-| 13 | 12 | `mWx` | Hotspot | 8 | 196 | 439 | 118 | — | — | — |
-| 14 | 13 | `mCfg` | Hotspot | 407 | 0 | 48 | 36 | — | — | — |
+| 11 | 10 | `mLight` | Hotspot | 0 | 36 | 220 | 156 | — | — | — |
+| 12 | 11 | `mHeat` | Hotspot | 224 | 36 | 224 | 156 | — | — | — |
+| 13 | 12 | `mWx` | Hotspot | 8 | 196 | 432 | 118 | — | — | — |
+| 14 | 13 | `mCfg` | Hotspot | 400 | 0 | 48 | 36 | — | — | — |
 
-**Ces valeurs (géométrie et `cid`) sont celles du `.HMI` réellement monté au
-09/2026** — l'ancienne barre de navigation basse `p0..p3`/`t0..t3` a été
-retirée, ce qui a renuméroté les hotspots. `main/ui/nx_nav.def` doit rester
-synchrone avec cette colonne `cid` ; en cas de doute, se fier au fichier, pas à
-ce document, et corriger l'un ou l'autre pour qu'ils concordent.
+**Les `cid` ci-dessus sont ceux du `.HMI` réellement monté au 09/2026** —
+l'ancienne barre de navigation basse `p0..p3`/`t0..t3` a été retirée, ce qui a
+renuméroté les hotspots. `main/ui/nx_nav.def` doit rester synchrone avec cette
+colonne `cid` ; en cas de doute, se fier au fichier, pas à ce document, et
+corriger l'un ou l'autre pour qu'ils concordent.
+
+**La géométrie (x/y/w/h) ci-dessus a été recalculée pour `MASK_R=32`** (voir
+`gen_images.py`), mais **pas encore réappliquée dans l'Editor** : le `.HMI`
+actuel porte toujours les positions de l'ancien `MASK_R=25`. Prochaine ouverture
+de l'Editor pour cette page : redéplacer les objets/hotspots (surtout `mWx`,
+`mHeat`, `mLight`, `mCfg`, dont le bord droit suit le fond) sur ces nouvelles
+valeurs, puis vérifier `touches` dans `/status` comme d'habitude.
 
 `pco` est donné en RGB565 décimal, déjà arrondi à la grille 565 comme les
 images (`COL_TXT` 61342, `COL_TXT_DIM` 35988, `COL_HEAT_SOFT` 62735,
@@ -120,8 +130,18 @@ l'anneau qu'il annote n'ont pas la même couleur).
 l'anneau occupe x:246–334, donc aucune contrainte de largeur pour ces deux
 champs — contrairement à un ancien montage centré dans le trou, qui débordait
 du rayon sûr et se faisait effacer par la resynchro périodique du texte (voir
-§1). Garder une marge malgré tout (x+w ≤ 439, bord droit de la tuile − 8) pour
-ne pas déborder de la carte.
+§1). Garder une marge malgré tout (x+w ≤ 432, bord droit de la tuile − 8) pour
+ne pas déborder de la carte. **Avec `MASK_R=32`, `tTemp`/`tSet` (x=344, w=90,
+x+w=434) dépassent cette marge de 2 px** — à corriger dans l'Editor en réduisant
+légèrement `w` (ou en décalant `x`) lors du prochain montage de `home`.
+
+### `vscope` = **global** sur tous les objets écrits par le firmware
+
+`tClock`, `tDate`, `tRoom`, `tLights`, `tTemp`, `tSet`, `pWx`, `tWxT`, `tWxC`,
+`pLight` : `vscope` = **`global`** (déjà le cas dans le `.HMI`). C'est ce qui
+les rend joignables sous `home.<objet>.<attr>` depuis n'importe quelle page —
+donc sondables au boot. Règle valable pour toute page ajoutée ensuite, voir
+`HMI-SPEC.md` § `vscope`. Les hotspots peuvent rester `local`.
 
 ### Fond de chaque composant : `sta` = **Crop Image**, `picc` = **1**
 

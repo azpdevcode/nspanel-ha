@@ -16,4 +16,4 @@ NX_NAV(NXP_HOME, 10, NXP_LIGHTS)
 NX_NAV(NXP_HOME, 11, NXP_CLIMATE)
 NX_NAV(NXP_HOME, 12, NXP_WEATHER)
 NX_NAV(NXP_HOME, 13, NXP_CFG)
-NX_NAV(NXP_CFG,  15, NXP_HOME)   /* bRet — prédiction, à corriger après le premier upload (voir design/EDITOR-CFG.md) */
+NX_NAV(NXP_CFG,  14, NXP_HOME)   /* bRet */

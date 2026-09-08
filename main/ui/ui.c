@@ -80,6 +80,15 @@ static uint32_t ui_timeout_s(void)
     return s_page == NXP_CFG ? UI_CFG_TIMEOUT_S : UI_HOME_TIMEOUT_S;
 }
 
+/* Voir ui_freeze() dans ui.h : coupe les ticks (donc toute écriture) le temps
+ * d'une manipulation manuelle de l'écran via /nx. */
+static volatile bool s_ui_frozen;
+
+void ui_freeze(bool on)
+{
+    s_ui_frozen = on;
+}
+
 /* Un dessin (nx_draw_arc) s'applique à la page affichée et ne survit ni à un
  * changement de page ni à un cycle veille/réveil : ce drapeau fait repeindre
  * les anneaux de home au prochain tick qui la trouve affichée, sans jamais
@@ -512,6 +521,12 @@ static void ui_task(void *arg)
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(UI_TICK_MS));
         drain_touches();
+
+        /* Gelé le temps d'une manipulation manuelle via /nx (ex. touch_j) :
+         * on continue à drainer les touches (utile pour observer des cid),
+         * mais ni resynchronisation périodique ni retour d'inactivité ne
+         * doivent venir réécrire l'écran par-dessus. */
+        if (s_ui_frozen) continue;
 
         /* Pendant un transfert, l'écran ne nous appartient pas : app_ota y
          * affiche sa progression, et tft_ota le réécrit entièrement. */

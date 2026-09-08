@@ -10,13 +10,13 @@ modification ici doit se refléter dans ces deux fichiers (et réciproquement).
 - **Orientation : 480×320 paysage** — résolution native de la dalle, et ce que
   le projet Editor utilise déjà. Figé : toutes les positions des pages ci-dessous
   et toutes les tailles d'images (`design/PROMPT-IMAGES.md`) en dépendent.
-- **Les ~25 px de droite sont masqués par le cadre du boîtier.** Ces colonnes
+- **Les ~32 px de droite sont masqués par le cadre du boîtier.** Ces colonnes
   existent dans la dalle, dans les images et dans les coordonnées Nextion, mais
   ne sont jamais visibles. Les images gardent donc leur **taille native
   480×320** — les redimensionner désalignerait tout — et c'est la **mise en
-  page** qui se replie sur une largeur utile de **455 px** (`MASK_R` / `WU`
+  page** qui se replie sur une largeur utile de **448 px** (`MASK_R` / `WU`
   dans `gen_images.py`), avec la même marge de 8 px à droite qu'à gauche : rien
-  d'utile au-delà de `x = 447`. Vaut aussi pour les composants posés dans
+  d'utile au-delà de `x = 440`. Vaut aussi pour les composants posés dans
   l'Editor (voir `EDITOR-HOME.md`, `EDITOR-CFG.md`) et pour le firmware, dont
   le centre des anneaux de `home` (`HOME_ARC_CX`, `main/ui/ui.c`) suit celui de
   la tuile Chauffage recadrée. Seule exception assumée : le dégradé plein écran
@@ -27,18 +27,72 @@ modification ici doit se refléter dans ces deux fichiers (et réciproquement).
   `.tft` chargé — celui d'origine Sonoff le réaffirme en continu. C'est le
   firmware ESP32 qui l'en sort (`exit_reparse_mode()` dans `bsp/nextion.c`),
   au boot et avant chaque upload. Ne pas chercher de case à cocher.
-- **`vscope` : rien à faire, laisser `local`.** Le firmware adresse tout objet
-  par son chemin complet `<page>.<objet>.<attribut>`, construit à partir de la
-  page déclarée dans `nx_objects.def` (`qname()` dans `bsp/nextion.c`). Vérifié
-  sur la cible : sous son nom nu, un composant ne répond que pendant que sa page
-  est affichée (`0x1A` sinon) ; qualifié, il répond en lecture comme en écriture
-  depuis n'importe quelle page, et la valeur écrite survit à la navigation.
-  Seule exception : `vis`, qui refuse un nom qualifié (`0x02`) et ne vaut donc
-  que pour la page affichée.
+- **`vscope` : mettre `global` sur tout objet listé dans `nx_objects.def`.**
+  Le firmware adresse ces objets par leur chemin complet
+  `<page>.<objet>.<attribut>`, construit à partir de la page déclarée dans
+  `nx_objects.def` (`qname()` dans `bsp/nextion.c`), et il les sonde tous au
+  boot depuis la page affichée à ce moment-là. Or un nom qualifié ne suffit
+  pas : **le préfixe de page ne rend joignable qu'un composant `global`.** Un
+  composant `local` (le défaut de l'Editor) ne répond que pendant que sa page
+  est affichée, qualifié ou non — `0x1A` sinon. Mesuré sur la cible : depuis
+  `home`, `get cfg.tRoom.txt` → `1A` tant que `cfg.tRoom` est `local`, `70 …`
+  une fois passé `global`. Les hotspots de navigation ne sont pas concernés
+  (ils ne sont ni sondés ni écrits), et `vis` reste l'exception inverse : il
+  refuse un nom qualifié (`0x02`) et ne vaut que pour la page affichée.
 - Symptôme si un jour ça régresse : `objects_present` reste à la seule page
-  affichée après un sondage complet. Se diagnostique en deux appels —
+  affichée après un sondage complet, `pages` marque `false` toutes les autres,
+  et la navigation vers elles devient un no-op silencieux (`nx_page()` refuse
+  une page dont l'ancre est absente). Se diagnostique en deux appels —
   `curl -X POST --data-urlencode "cmd=get home.tClock.txt" http://<panneau>/nx`
-  doit renvoyer `70 …`, un `1A` désignant un objet vraiment absent.
+  doit renvoyer `70 …`. Un `1A` sur `<page>.<objet>` alors que `page <page>`
+  puis `get <objet>.<attr>` répond : c'est un `vscope` resté `local`, pas un
+  objet absent.
+- **Biais tactile : défaut matériel connu du NSPanel EU, pas un problème de
+  résolution ni de calibration à deviner page par page.** Le bezel/vitre du
+  boîtier masque une bande à droite de l'écran (~25-32 px, cohérent avec
+  `MASK_R=32` dans `design/images/gen_images.py`, aligné sur la correction
+  `lcd_dev … 0020` ci-dessous — `0x20` = 32), et le numériseur résistif
+  garde une calibration d'usine qui ne tient pas compte de cette bande — d'où
+  un `x` rapporté systématiquement plus grand que le point réellement pressé,
+  l'écart croissant vers la droite (et variant aussi avec `y`, la pression du
+  cadre n'étant pas uniforme). **Documenté et corrigé par la communauté
+  NSPanel** (wiki `masto/NSPanel-Demo-Files`, issue `marcfager/nspanel-mf#5`) :
+  une seule ligne dans `Program.s`, **avant `page 0`** :
+  ```
+  lcd_dev fffb 0002 0000 0020
+  ```
+  Corrige le décalage à la source dans le firmware Nextion — hotspots et
+  Sliders (`hDim`/`hSleep`) en une fois, sans mesure ni compensation par page.
+  Une session précédente (2026-09-08) avait d'abord élargi/décalé les hotspots
+  de `cfg` à la main pour absorber le biais : **abandonné**, remplacé par ce
+  correctif — ne pas réintroduire ce genre de compensation géométrique par
+  page, la vraie cause est réglée une fois pour toutes ici.
+  `touch_j` (calibration interactive) reste un outil valide, mais **seulement
+  placé dans l'événement Page Preinitialize d'un projet dédié à la
+  calibration**, jamais envoyé en commande série au runtime (constaté sans
+  effet visible même avec `ui_freeze()` actif, cf. ci-dessous — ce n'est pas
+  une resynchronisation du firmware qui l'empêchait, la doc Nextion précise
+  que cet événement ne s'exécute qu'une fois, au tout premier boot du projet
+  compilé).
+  Pour toute manipulation manuelle de l'écran via `/nx` (mesure `sendxy`,
+  test d'une instruction Nextion...), geler d'abord `ui_task` pour ne pas
+  mélanger le résultat avec sa resynchronisation périodique (toutes les 20 s,
+  `resync_due()` dans `main/ui/ui.c`) :
+  ```
+  curl -d "freeze=1" http://<panneau>/nx           # suspend ui_task
+  curl -d "cmd=sendxy=1" http://<panneau>/nx       # active le rapport brut
+  curl -d "cmd=&window=3000" http://<panneau>/nx   # écoute 3 s, PENDANT
+                                                     # qu'on touche l'écran
+  curl -d "cmd=sendxy=0" http://<panneau>/nx       # désactive en fin de mesure
+  curl -d "freeze=0" http://<panneau>/nx           # reprend ui_task
+  ```
+  Chaque appui renvoie deux trames `67 xH xL yH yL ev FF FF FF` (`0x67`,
+  x/y en little-endian, `ev`=1 pression puis 0 relâche) — ce sont les
+  coordonnées vues par l'écran, à comparer à la position visuelle du repère
+  touché (géométrie dans `EDITOR-*.md` ou `design/images/gen_images.py`).
+  Ne mesurer que sur des icônes/repères déjà validés comme non destructifs
+  (une carte OTA/TFT/Reboot mal calée redéclenche l'action pour de vrai — vécu
+  le 2026-09-08, redémarrage intempestif du panneau en pleine mesure).
 - Polices `.zi` (chasse fixe) : `f0` 16 px, `f1` 24 px, `f2` 48 px.
   **Générer en encodage `iso-8859-1`, jamais `utf-8`.** C'est l'encodage qui
   fait la taille, pas les cases « Latin base / Latin-1 » cochées : en mode

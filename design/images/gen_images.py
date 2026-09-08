@@ -43,8 +43,8 @@ W, H = 480, 320                       # 480×320 paysage (résolution native)
 # la MISE EN PAGE qui se replie sur `WU` — sinon tout ce qui est calé à droite
 # (icône cfg, bord des cartes, flèches) disparaît sous le cadre.
 # À reporter dans l'Editor : voir design/EDITOR-HOME.md et design/EDITOR-CFG.md.
-MASK_R = 25
-WU = W - MASK_R                       # 455 px réellement visibles
+MASK_R = 32
+WU = W - MASK_R                       # 448 px réellement visibles
 M = 8                                 # marge de page, identique à gauche et à droite
 
 
@@ -83,8 +83,13 @@ def load_palette():
         print("ui_common.h introuvable (%s) — palette de secours"
               % HA_PANEL_UI_COMMON, file=sys.stderr)
         return dict(PALETTE_FALLBACK), "copie locale"
-    found = dict(re.findall(r"#define\s+((?:COL|SKY)_\w+)\s+0x([0-9a-fA-F]{6})", src))
-    pal = {k: int(v, 16) for k, v in found.items()}
+    # Une teinte peut être un littéral hex ou un alias vers une autre teinte
+    # déjà #define-ie plus haut (ex. `SKY_DAY_T COL_NAVY`) — on résout ces
+    # alias par substitution itérative avant de convertir en entiers.
+    raw = dict(re.findall(r"#define\s+((?:COL|SKY)_\w+)\s+(0x[0-9a-fA-F]{6}|(?:COL|SKY)_\w+)", src))
+    for _ in range(len(raw)):
+        raw = {k: raw.get(v, v) for k, v in raw.items()}
+    pal = {k: int(v, 16) for k, v in raw.items() if v.startswith("0x")}
     missing = [k for k in PALETTE_FALLBACK if k not in pal]
     if missing:
         raise SystemExit("couleurs absentes de %s : %s"
@@ -361,8 +366,10 @@ def bg_home():
     accent_card(img, TILE_R, HEAT)
     stamp(img, (TILE_R[0] + 8, 60), "heat", 20, HEAT)
     label(d, (TILE_R[0] + 34, 70), "Chauffage", HEAT, 14, "lm")
-    # Météo : carte en dégradé bleu.
-    sky(img, CARD_WX)
+    # Météo : carte en dégradé bleu marine, même recette que card() côté
+    # ha-panel (page_accueil.c acc_tile_apply_mode) — pas le dégradé de la
+    # page Météo dédiée (SKY_DAY_T/B).
+    accent_card(img, CARD_WX, NAVY)
     stamp(img, (20, 206), "weather", 20, TXT)
     label(d, (46, 216), "Météo", TXT, 15, "lm")
     return img
