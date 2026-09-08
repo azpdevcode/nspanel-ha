@@ -10,13 +10,13 @@ modification ici doit se refléter dans ces deux fichiers (et réciproquement).
 - **Orientation : 480×320 paysage** — résolution native de la dalle, et ce que
   le projet Editor utilise déjà. Figé : toutes les positions des pages ci-dessous
   et toutes les tailles d'images (`design/PROMPT-IMAGES.md`) en dépendent.
-- **Les ~25 px de droite sont masqués par le cadre du boîtier.** Ces colonnes
+- **Les ~32 px de droite sont masqués par le cadre du boîtier.** Ces colonnes
   existent dans la dalle, dans les images et dans les coordonnées Nextion, mais
   ne sont jamais visibles. Les images gardent donc leur **taille native
   480×320** — les redimensionner désalignerait tout — et c'est la **mise en
-  page** qui se replie sur une largeur utile de **455 px** (`MASK_R` / `WU`
+  page** qui se replie sur une largeur utile de **448 px** (`MASK_R` / `WU`
   dans `gen_images.py`), avec la même marge de 8 px à droite qu'à gauche : rien
-  d'utile au-delà de `x = 447`. Vaut aussi pour les composants posés dans
+  d'utile au-delà de `x = 440`. Vaut aussi pour les composants posés dans
   l'Editor (voir `EDITOR-HOME.md`, `EDITOR-CFG.md`) et pour le firmware, dont
   le centre des anneaux de `home` (`HOME_ARC_CX`, `main/ui/ui.c`) suit celui de
   la tuile Chauffage recadrée. Seule exception assumée : le dégradé plein écran
@@ -50,7 +50,8 @@ modification ici doit se refléter dans ces deux fichiers (et réciproquement).
 - **Biais tactile : défaut matériel connu du NSPanel EU, pas un problème de
   résolution ni de calibration à deviner page par page.** Le bezel/vitre du
   boîtier masque une bande à droite de l'écran (~25-32 px, cohérent avec
-  `MASK_R=25` dans `design/images/gen_images.py`), et le numériseur résistif
+  `MASK_R=32` dans `design/images/gen_images.py`, aligné sur la correction
+  `lcd_dev … 0020` ci-dessous — `0x20` = 32), et le numériseur résistif
   garde une calibration d'usine qui ne tient pas compte de cette bande — d'où
   un `x` rapporté systématiquement plus grand que le point réellement pressé,
   l'écart croissant vers la droite (et variant aussi avec `y`, la pression du

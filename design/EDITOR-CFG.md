@@ -6,9 +6,9 @@ Complète `design/HMI-SPEC.md`, qui reste la source de vérité pour les noms
 d'objets — voir aussi `design/EDITOR-HOME.md` pour la méthode (ce document en
 reprend la structure).
 
-Tout est en **480×320 paysage**, mais les **~25 px de droite sont masqués par le
-cadre du boîtier** : la largeur utile est de **455 px** et rien d'utile ne doit
-dépasser `x = 447`. L'image de fond garde sa taille native ; c'est la mise en
+Tout est en **480×320 paysage**, mais les **~32 px de droite sont masqués par le
+cadre du boîtier** : la largeur utile est de **448 px** et rien d'utile ne doit
+dépasser `x = 440`. L'image de fond garde sa taille native ; c'est la mise en
 page qui se replie (`MASK_R`/`WU` dans `design/images/gen_images.py`). Les
 coordonnées ci-dessous en tiennent déjà compte.
 
@@ -57,21 +57,21 @@ contigus, ce qui simplifie leur relevé.
 
 | cid | `objname` | Type | x | y | w | h | Police | `pco` | Notes |
 |---|---|---|---|---|---|---|---|---|---|
-| 1 | `tRoom` | Text | 66 | 26 | 270 | 20 | f1 | 61342 | gauche / centré |
-| 2 | `tDim` | Text | 355 | 60 | 84 | 20 | f0 | 61342 | droite / centré |
-| 3 | `tSleep` | Text | 355 | 106 | 84 | 20 | f0 | 61342 | droite / centré |
-| 4 | `hDim` | Slider (h) | 16 | 86 | 423 | 18 | — | 62963 | `minval`=10, `maxval`=100 |
-| 5 | `hSleep` | Slider (h) | 16 | 132 | 423 | 18 | — | 15335 | `minval`=0, `maxval`=300 |
-| 6 | `tSsid` | Text | 70 | 160 | 369 | 20 | f0 | 61342 | gauche / centré |
-| 7 | `tIp` | Text | 70 | 191 | 369 | 20 | f0 | 61342 | gauche / centré |
-| 8 | `tHa` | Text | 70 | 222 | 369 | 20 | f0 | 61342 | gauche / centré |
-| 9 | `bRoomPrev` | Hotspot | 353 | 6 | 46 | 46 | — | — | — |
-| 10 | `bRoomNext` | Hotspot | 393 | 6 | 46 | 46 | — | — | — |
-| 11 | `bOta` | Hotspot | 16 | 252 | 134 | 40 | — | — | — |
-| 12 | `bTft` | Hotspot | 160 | 252 | 134 | 40 | — | — | — |
-| 13 | `bReboot` | Hotspot | 304 | 252 | 134 | 40 | — | — | — |
+| 1 | `tRoom` | Text | 66 | 26 | 263 | 20 | f1 | 61342 | gauche / centré |
+| 2 | `tDim` | Text | 348 | 60 | 84 | 20 | f0 | 61342 | droite / centré |
+| 3 | `tSleep` | Text | 348 | 106 | 84 | 20 | f0 | 61342 | droite / centré |
+| 4 | `hDim` | Slider (h) | 16 | 86 | 416 | 18 | — | 62963 | `minval`=10, `maxval`=100 |
+| 5 | `hSleep` | Slider (h) | 16 | 132 | 416 | 18 | — | 15335 | `minval`=0, `maxval`=300 |
+| 6 | `tSsid` | Text | 70 | 160 | 362 | 20 | f0 | 61342 | gauche / centré |
+| 7 | `tIp` | Text | 70 | 191 | 362 | 20 | f0 | 61342 | gauche / centré |
+| 8 | `tHa` | Text | 70 | 222 | 362 | 20 | f0 | 61342 | gauche / centré |
+| 9 | `bRoomPrev` | Hotspot | 346 | 6 | 46 | 46 | — | — | — |
+| 10 | `bRoomNext` | Hotspot | 386 | 6 | 46 | 46 | — | — | — |
+| 11 | `bOta` | Hotspot | 16 | 252 | 132 | 40 | — | — | — |
+| 12 | `bTft` | Hotspot | 158 | 252 | 132 | 40 | — | — | — |
+| 13 | `bReboot` | Hotspot | 300 | 252 | 132 | 40 | — | — | — |
 | 14 | `bRet` | Hotspot | 0 | 4 | 52 | 48 | — | — | — |
-| 15 | `tVer` | Text | 14 | 298 | 426 | 16 | f0 | 23261 | gauche / centré |
+| 15 | `tVer` | Text | 14 | 298 | 419 | 16 | f0 | 23261 | gauche / centré |
 
 Les `cid` de cette colonne sont ceux **relevés sur la cible**, pas une
 prédiction : le premier composant d'une page porte le `cid` **1** (le `0` est
@@ -89,6 +89,12 @@ Les `x`/`w` ci-dessus suivent exactement la géométrie dessinée dans
 compenser un décalage tactile constaté au doigt** : voir `HMI-SPEC.md` § « Biais
 tactile » pour la vraie cause (bezel NSPanel EU, corrigé une fois pour toutes
 via `lcd_dev` dans `Program.s`, pas ici par page).
+
+**Recalculées pour `MASK_R=32`, pas encore réappliquées dans l'Editor** : le
+`.HMI` actuel porte toujours la géométrie de l'ancien `MASK_R=25`. Prochaine
+ouverture de l'Editor pour cette page : redéplacer tous les objets sur ces
+nouvelles valeurs (bord droit du fond décalé de `447` à `440`), puis revérifier
+les `cid` réels comme au § 6 — la recréation d'un composant les redécale.
 
 `pco` en RGB565 décimal, arrondis depuis la palette (`COL_TXT` 61342,
 `COL_TXT_FAINT` 23261 pour `tVer`, `COL_LIGHTS` 62963 pour la barre de `hDim`,
