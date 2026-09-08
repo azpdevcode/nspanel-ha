@@ -130,6 +130,7 @@ HOME      = _c("COL_HOME")
 GREEN     = _c("COL_GREEN")
 RED       = _c("COL_RED")
 NAVY      = _c("COL_NAVY")            # séparateurs sur le dégradé
+NAVY_LT   = _c("COL_NAVY_LT")         # titre/icône de la carte Météo
 SKY_T     = _c("SKY_DAY_T")           # dégradé météo, haut
 SKY_B     = _c("SKY_DAY_B")           # dégradé météo, bas
 
@@ -191,9 +192,40 @@ def icon_on_patch(page_img, xy, glyph, size, fg):
     return patch.convert("RGB")
 
 
+def badge_on_patch(page_img, xy, glyph, size, ring_color, fill_color, glyph_color,
+                   ring_w=7):
+    """Badge circulaire (anneau + disque) aplati sur le fond, glyphe centré.
+
+    Reprend le principe d'`icon_on_patch()` (aplatissement sur le morceau de
+    fond réellement recouvert), mais dessine un badge rond façon « bouton »
+    plutôt qu'un glyphe nu — cf. pLight (ampoule de la tuile Lumières)."""
+    x, y = xy
+    patch = page_img.crop((x, y, x + size, y + size)).convert("RGBA")
+    d = ImageDraw.Draw(patch)
+    d.ellipse((0, 0, size - 1, size - 1), fill=ring_color)
+    d.ellipse((ring_w, ring_w, size - 1 - ring_w, size - 1 - ring_w), fill=fill_color)
+    gsize = int(size * 0.45)
+    goff = (size - gsize) // 2
+    patch.alpha_composite(svg_rgba(glyph, gsize, glyph_color, fill_color), (goff, goff))
+    return patch.convert("RGB")
+
+
 def stamp(img, xy, glyph, size, fg):
     """Grave une icône dans un fond (elle ne changera jamais)."""
     img.paste(icon_on_patch(img, xy, glyph, size, fg), xy)
+
+
+def stamp_chip(img, xy, glyph, size, fg, chip_fill, pad=3, r=7):
+    """Grave une icône dans un petit carré arrondi (chip), aplati sur le fond
+    réel — même principe que `stamp()`, avec un fond de chip en plus."""
+    x, y = xy
+    chip = size + pad * 2
+    cx, cy = x - pad, y - pad
+    patch = img.crop((cx, cy, cx + chip, cy + chip)).convert("RGBA")
+    ImageDraw.Draw(patch).rounded_rectangle((0, 0, chip - 1, chip - 1), radius=r,
+                                            fill=chip_fill)
+    patch.alpha_composite(svg_rgba(glyph, size, fg, chip_fill), (pad, pad))
+    img.paste(patch.convert("RGB"), (cx, cy))
 
 
 def dither565(img):
@@ -348,7 +380,14 @@ _tw = ((WU - 2 * M) - 17) // 2                    # 17 px de gouttière
 TILE_L = (M, TILE_Y0, M + _tw, TILE_Y1)           # Lumières
 TILE_R = (M + _tw + 17, TILE_Y0, WU - M, TILE_Y1)  # Chauffage
 CARD_WX = (M, 196, WU - M, 314)                   # carte Météo
-SLOT_HOME_LIGHT = (16, 99)                        # home.pLight, 64×64
+
+# home.pLight : badge circulaire centré dans TILE_L, sous l'en-tête « Lumières »
+# (icône + libellé, y≈52..84) — plus de tRoom/tLights sous l'ampoule, elle a
+# donc toute la hauteur restante de la tuile pour elle.
+HOME_LIGHT_SIZE = 88
+_tile_l_cx = (TILE_L[0] + TILE_L[2]) // 2
+_tile_l_cy = (84 + TILE_L[3]) // 2
+SLOT_HOME_LIGHT = (_tile_l_cx - HOME_LIGHT_SIZE // 2, _tile_l_cy - HOME_LIGHT_SIZE // 2)
 
 
 def bg_home():
@@ -358,20 +397,20 @@ def bg_home():
     # pLight (bilan on/off, 65/66) et les valeurs (tRoom, tLights) sont des
     # objets Nextion posés dessus.
     accent_card(img, TILE_L, LIGHTS)
-    stamp(img, (16, 60), "light", 20, LIGHTS)
+    stamp_chip(img, (16, 60), "light", 20, LIGHTS, mix(LIGHTS, "#000000", 160))
     label(d, (42, 70), "Lumières", LIGHTS, 14, "lm")
     # Tuile Chauffage — dégradé orange (accent COL_HEAT) ; les anneaux sont
     # dessinés à l'exécution par le firmware (nx_draw_arc, main/ui/ui.c), pas
     # ici : ils portent une valeur. Ne rien poser au centre (EDITOR-HOME.md).
     accent_card(img, TILE_R, HEAT)
-    stamp(img, (TILE_R[0] + 8, 60), "heat", 20, HEAT)
+    stamp_chip(img, (TILE_R[0] + 8, 60), "heat", 20, HEAT, mix(HEAT, "#000000", 160))
     label(d, (TILE_R[0] + 34, 70), "Chauffage", HEAT, 14, "lm")
     # Météo : carte en dégradé bleu marine, même recette que card() côté
     # ha-panel (page_accueil.c acc_tile_apply_mode) — pas le dégradé de la
     # page Météo dédiée (SKY_DAY_T/B).
     accent_card(img, CARD_WX, NAVY)
-    stamp(img, (20, 206), "weather", 20, TXT)
-    label(d, (46, 216), "Météo", TXT, 15, "lm")
+    stamp_chip(img, (20, 206), "weather", 20, NAVY_LT, mix(NAVY_LT, "#000000", 160))
+    label(d, (46, 216), "Météo", NAVY_LT, 15, "lm")
     return img
 
 
@@ -512,15 +551,22 @@ def main(outdir):
              "condition « %s » — aplatie sur la carte météo en %s"
              % (c, SLOT_HOME_WX))
 
-    for suffix, col in (("off", DIM), ("on", LIGHTS)):          # 65–66
-        # Aplatie sur le MORCEAU EXACT de la tuile Lumières qu'elle recouvre :
-        # depuis que cette tuile est en dégradé (accent_card), un aplat CARD
-        # laisserait un rectangle plus sombre autour de l'ampoule. pLight
-        # devient donc liée à sa position, comme pWx — la déplacer dans
-        # l'Editor oblige à corriger SLOT_HOME_LIGHT et à régénérer.
-        emit(icon_on_patch(pages["bg_home"], SLOT_HOME_LIGHT, "light", 64, col),
+    # Badge circulaire de l'ampoule (65 = éteinte, 66 = allumée) : anneau +
+    # disque + glyphe, aplatis sur le MORCEAU EXACT de la tuile Lumières qu'ils
+    # recouvrent — pLight reste lié à sa position, comme pWx ; le déplacer dans
+    # l'Editor oblige à corriger SLOT_HOME_LIGHT et à régénérer.
+    LIGHT_OFF_FILL = mix(LIGHTS, CARD2, 25)   # disque bleu-gris sombre
+    LIGHT_OFF_RING = mix(LIGHTS, CARD2, 55)   # anneau un cran plus clair
+    LIGHT_ON_FILL  = LIGHTS                   # disque doré plein
+    LIGHT_ON_RING  = mix("#ffffff", LIGHTS, 200)  # anneau légèrement éclairci (halo)
+    for suffix, ring, fill, glyph_col in (
+        ("off", LIGHT_OFF_RING, LIGHT_OFF_FILL, TXT),
+        ("on",  LIGHT_ON_RING,  LIGHT_ON_FILL,  CARD),
+    ):                                                        # 65–66
+        emit(badge_on_patch(pages["bg_home"], SLOT_HOME_LIGHT, "light",
+                            HOME_LIGHT_SIZE, ring, fill, glyph_col),
              "home_light64_" + suffix, "home", "pLight",
-             "ampoule de la tuile Lumières, %s — aplatie sur le dégradé en %s"
+             "ampoule de la tuile Lumières, %s — badge aplati sur le dégradé en %s"
              % (suffix, SLOT_HOME_LIGHT))
 
     with open(os.path.join(outdir, "manifest.csv"), "w", newline="",

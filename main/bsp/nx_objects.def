@@ -18,8 +18,6 @@ NX_OBJ(BOOT_PROGRESS,   NXP_BOOT,    "jProg",  "val")
 /* --- home (ancre : tClock) --- */
 NX_OBJ(HOME_CLOCK,      NXP_HOME,    "tClock", "txt")
 NX_OBJ(HOME_DATE,       NXP_HOME,    "tDate",  "txt")
-NX_OBJ(HOME_ROOM,       NXP_HOME,    "tRoom",  "txt")
-NX_OBJ(HOME_LIGHTS,     NXP_HOME,    "tLights","txt")
 NX_OBJ(HOME_TEMP,       NXP_HOME,    "tTemp",  "txt")
 NX_OBJ(HOME_SET,        NXP_HOME,    "tSet",   "txt")
 NX_OBJ(HOME_WX_PIC,     NXP_HOME,    "pWx",    "pic")

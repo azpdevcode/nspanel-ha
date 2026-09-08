@@ -360,7 +360,6 @@ static void home_arcs_paint(bool ok, float cur, float set)
 static void home_page_tick(const struct tm *tm)
 {
     static char clock_cache[UI_CACHE_LEN], date_cache[UI_CACHE_LEN];
-    static char room_cache[UI_CACHE_LEN], lights_cache[UI_CACHE_LEN];
     static char temp_cache[UI_CACHE_LEN], set_cache[UI_CACHE_LEN];
     static int  light_pic_cache = -1;
     static float prev_cur = -1.0f, prev_set = -1.0f;
@@ -379,21 +378,11 @@ static void home_page_tick(const struct tm *tm)
 
     if (rooms_model_dirty()) ESP_LOGI(TAG, "modèle pièces à jour, rafraîchissement home");
 
-    /* "pièce ?" (ASCII) plutôt qu'un tiret cadratin : hors Latin-1, il serait
-     * de toute façon rendu '?' par latin1_escape_into (nextion.c). */
+    /* Pièce affichée (rooms_current()) : seule l'ampoule pLight en reflète
+     * l'état allumé/éteint sur l'accueil — pas de nom ni de compteur ici,
+     * cf. design/EDITOR-HOME.md (déplacés/retirés). */
     int room = rooms_current();
-    snprintf(buf, sizeof(buf), "%s", rooms_count() ? rooms_name(room) : "pièce ?");
-    set_if_changed(HOME_ROOM, room_cache, buf, force);
-
-    /* Libellé court (cf. design/HMI-SPEC.md: "3 allumées") : la zone tRoom du
-     * .tft tronque au-delà d'une quinzaine de caractères. Per-pièce (celle
-     * affichée), pas maison entière — rooms_lights_on()/rooms_lights_total()
-     * restent globales pour /status, cf. rooms.h. */
-    int on = rooms_lights_on_in(room), total = rooms_light_count(room);
-    if (total == 0) snprintf(buf, sizeof(buf), "aucune lumière");
-    else if (on == 0) snprintf(buf, sizeof(buf), "toute éteinte");
-    else snprintf(buf, sizeof(buf), "%d allumée%s", on, on > 1 ? "s" : "");
-    set_if_changed(HOME_LIGHTS, lights_cache, buf, force);
+    int on = rooms_lights_on_in(room);
 
     /* Ampoule de la tuile Lumières (65 = éteinte, 66 = allumée, cf.
      * design/images/gen_images.py) : deux images seulement, pas de cache texte. */

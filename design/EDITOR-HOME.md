@@ -7,8 +7,18 @@ l'allocation des `pic` id.
 
 Tout est en **480×320 paysage**. Les coordonnées ci-dessous sont exactes : le
 fond `01_bg_home.png` a été dessiné avec elles, et les icônes `pWx` (`26,232`)
-et `pLight` (`16,99`) sont aplaties sur le morceau de dégradé qu'elles
+et `pLight` (`67,93`) sont aplaties sur le morceau de dégradé qu'elles
 recouvrent — les déplacer casse le rendu.
+
+**Changement récent : `tRoom` et `tLights` ont été retirés de `home`** (le nom
+de la pièce et le libellé « X allumée(s) » ne sont plus affichés sur
+l'accueil — ce dernier reviendra plus tard sur la page Lumières, tâche
+séparée). `pLight` est devenu un **badge circulaire de 88×88** (au lieu d'un
+glyphe plat de 64×64) centré dans la tuile Lumières, puisqu'il n'a plus de
+texte à côté de lui. Dans l'Editor : **supprimer** les composants `tRoom` et
+`tLights` de la page `home`, puis **déplacer et redimensionner** `pLight`
+(et le hotspot `mLightToggle` par-dessus, mêmes coordonnées) vers
+`x=67, y=93, w=88, h=88`.
 
 **Les ~32 px de droite de la dalle sont masqués par le cadre du boîtier.** La
 largeur utile est donc **448 px**, pas 480 : rien d'utile ne doit dépasser
@@ -29,7 +39,9 @@ compte.
 4. Page nommée exactement `home`, créée **en deuxième** (index 1) — l'ordre des
    pages doit suivre `main/bsp/nx_pages.def`.
 5. `main/bsp/nx_objects.def` doit déjà contenir la ligne `pLight` (ajoutée avec
-   ce montage) : `NX_OBJ(HOME_LIGHT_PIC, NXP_HOME, "pLight", "pic")`.
+   ce montage) : `NX_OBJ(HOME_LIGHT_PIC, NXP_HOME, "pLight", "pic")`. Les
+   lignes `HOME_ROOM`/`tRoom` et `HOME_LIGHTS`/`tLights` ont été retirées de ce
+   fichier — ne pas les recréer dans l'Editor.
 
 ## 1. Attributs de la page
 
@@ -80,7 +92,7 @@ l'anneau dessous. Si la tuile Chauffage bouge dans l'Editor, corriger
 ## 2. Composants, dans l'ordre de création
 
 Le firmware n'adresse les objets **que par leur nom** (`home.tClock.txt=…`,
-`get home.pWx.pic`) : pour les onze premiers, l'ordre de création n'a aucune
+`get home.pWx.pic`) : pour les neuf premiers, l'ordre de création n'a aucune
 importance, il ne fait que rendre la relecture plus simple.
 
 Les **hotspots** sont l'exception, et pour une raison de protocole : un appui
@@ -88,8 +100,8 @@ remonte la trame `0x65 page cid event` (`main/bsp/nextion.c:504`), qui ne
 transporte pas de nom — seulement deux entiers. `main/ui/nx_nav.def` (navigation)
 et `main/ui/nx_actions.def` (actions hors navigation, ex. bascule des lumières)
 doivent donc mapper ces `cid`. L'Editor les attribue par rang de création dans
-la page, d'où la consigne : créer les onze objets pilotés d'abord, les cinq
-hotspots ensuite, ce qui donne 12..16 — **`mLightToggle` (bascule des lumières
+la page, d'où la consigne : créer les neuf objets pilotés d'abord, les cinq
+hotspots ensuite, ce qui donne 10..14 — **`mLightToggle` (bascule des lumières
 de la pièce) doit être créé en DERNIER**, après `mLight`, pour se retrouver
 au-dessus de lui dans l'empilement et intercepter le tactile sur l'ampoule
 plutôt que de laisser `mLight` naviguer vers la page Lumières à cet endroit.
@@ -98,19 +110,20 @@ plutôt que de laisser `mLight` naviguer vers la page Lumières à cet endroit.
 |---|---|---|---|---|---|---|---|---|---|---|
 | 1 | — | `tClock` | Text | 14 | 4 | 150 | 44 | f2 | 61342 | gauche / centré vert. |
 | 2 | — | `tDate` | Text | 220 | 14 | 165 | 20 | f0 | 35988 | droite / centré |
-| 3 | — | `pLight` | Picture | 16 | 99 | 64 | 64 | — | — | `pic` = 65 |
-| 4 | — | `tRoom` | Text | 88 | 126 | 128 | 26 | f1 | 65535 | gauche / centré |
-| 5 | — | `tLights` | Text | 88 | 156 | 128 | 26 | f0 | 35988 | gauche / centré |
-| 6 | — | `tTemp` | Text | 344 | 118 | 90 | 26 | f1 | 62735 | centré / centré |
-| 7 | — | `tSet` | Text | 344 | 148 | 90 | 18 | f0 | 60231 | centré / centré |
-| 8 | — | `pWx` | Picture | 26 | 232 | 64 | 64 | — | — | `pic` = 56 |
-| 9 | — | `tWxT` | Text | 100 | 232 | 160 | 56 | f2 | 61342 | gauche / centré |
-| 10 | — | `tWxC` | Text | 100 | 290 | 250 | 20 | f0 | 61342 | gauche / centré |
-| 11 | 10 | `mLight` | Hotspot | 0 | 36 | 220 | 156 | — | — | — |
-| 12 | 11 | `mHeat` | Hotspot | 224 | 36 | 224 | 156 | — | — | — |
-| 13 | 12 | `mWx` | Hotspot | 8 | 196 | 432 | 118 | — | — | — |
-| 14 | 13 | `mCfg` | Hotspot | 400 | 0 | 48 | 36 | — | — | — |
-| 15 | 14 | `mLightToggle` | Hotspot | 16 | 99 | 64 | 64 | — | — | — |
+| 3 | — | `pLight` | Picture | 67 | 93 | 88 | 88 | — | — | `pic` = 65 |
+| 4 | — | `tTemp` | Text | 344 | 118 | 90 | 26 | f1 | 62735 | centré / centré |
+| 5 | — | `tSet` | Text | 344 | 148 | 90 | 18 | f0 | 60231 | centré / centré |
+| 6 | — | `pWx` | Picture | 26 | 232 | 64 | 64 | — | — | `pic` = 56 |
+| 7 | — | `tWxT` | Text | 100 | 232 | 160 | 56 | f2 | 61342 | gauche / centré |
+| 8 | — | `tWxC` | Text | 100 | 290 | 250 | 20 | f0 | 61342 | gauche / centré |
+| 9 | 10 | `mLight` | Hotspot | 0 | 36 | 220 | 156 | — | — | — |
+| 10 | 11 | `mHeat` | Hotspot | 224 | 36 | 224 | 156 | — | — | — |
+| 11 | 12 | `mWx` | Hotspot | 8 | 196 | 432 | 118 | — | — | — |
+| 12 | 13 | `mCfg` | Hotspot | 400 | 0 | 48 | 36 | — | — | — |
+| 13 | 14 | `mLightToggle` | Hotspot | 67 | 93 | 88 | 88 | — | — | — |
+
+`tRoom` et `tLights` ont été **retirés** (voir note en tête de document) : ils
+n'apparaissent plus dans ce tableau ni dans `main/bsp/nx_objects.def`.
 
 **Les `cid` 10..13 ci-dessus sont ceux du `.HMI` réellement monté au 09/2026** —
 l'ancienne barre de navigation basse `p0..p3`/`t0..t3` a été retirée, ce qui a
@@ -148,7 +161,7 @@ légèrement `w` (ou en décalant `x`) lors du prochain montage de `home`.
 
 ### `vscope` = **global** sur tous les objets écrits par le firmware
 
-`tClock`, `tDate`, `tRoom`, `tLights`, `tTemp`, `tSet`, `pWx`, `tWxT`, `tWxC`,
+`tClock`, `tDate`, `tTemp`, `tSet`, `pWx`, `tWxT`, `tWxC`,
 `pLight` : `vscope` = **`global`** (déjà le cas dans le `.HMI`). C'est ce qui
 les rend joignables sous `home.<objet>.<attr>` depuis n'importe quelle page —
 donc sondables au boot. Règle valable pour toute page ajoutée ensuite, voir
@@ -172,8 +185,7 @@ le PNG.
 affichage, `home_page_placeholders_once()` dans `main/ui/ui.c`, en attendant la
 météo — phase 3). `tTemp`, `tSet` : laisser vide, le firmware les écrit dans la
 seconde qui suit l'affichage de `home` (valeur réelle ou `--` selon la
-disponibilité de l'entité climate). `tClock`/`tDate`/`tRoom`/`tLights` : laisser
-vide, idem.
+disponibilité de l'entité climate). `tClock`/`tDate` : laisser vide, idem.
 
 ### Événements tactiles
 
@@ -199,11 +211,11 @@ action selon la table où le `(page, cid)` est trouvé.
 |---|---|---|---|
 | 1 | `01_bg_home.png` | fond de page | 480×320, tuiles + carte météo, sans les anneaux |
 | 56..64 | `56_home_wx64_*.png` | `pWx` | ordre `sunny, clear-night, partlycloudy, cloudy, rainy, snowy, lightning, windy, fog` — le firmware écrit `56 + index` |
-| 65 / 66 | `65_home_light64_off.png` / `66_..._on.png` | `pLight` | aplaties sur le dégradé de la tuile Lumières pris en `16,99` |
+| 65 / 66 | `65_home_light64_off.png` / `66_..._on.png` | `pLight` | badge circulaire 88×88 (anneau + disque + glyphe), aplati sur le dégradé de la tuile Lumières pris en `67,93` |
 
 **`pWx` et `pLight` sont tous deux liés à leur position** : leur PNG contient le
 morceau exact de dégradé qu'ils recouvrent — la carte météo en `26,232` pour
-`pWx`, la tuile Lumières en `16,99` pour `pLight`. Si la carte, la tuile ou
+`pWx`, la tuile Lumières en `67,93` pour `pLight`. Si la carte, la tuile ou
 l'icône bouge, corriger `SLOT_HOME_WX` / `SLOT_HOME_LIGHT` dans `gen_images.py`
 et régénérer, sinon un rectangle de la mauvaise teinte apparaît autour du
 glyphe. (`pLight` se déplaçait librement tant que la tuile Lumières était un
@@ -211,13 +223,12 @@ aplat `COL_CARD` ; ce n'est plus vrai depuis qu'elle est en dégradé.)
 
 ## 4. Ce que fait le firmware une fois le `.tft` en place
 
-- **Lumières** (`main/ui/ui.c:home_page_tick`) : `tRoom`, `tLights` et `pLight`
-  reflètent tous les trois la **pièce affichée** (`rooms_current()`) —
-  `tLights`/`pLight` via `rooms_lights_on_in(room)`/`rooms_light_count(room)`
-  (`rooms.c`), pas `rooms_lights_on()`/`rooms_lights_total()` qui restent
-  volontairement globales (toutes pièces confondues, utilisées par `/status`
-  et le log de boot, pas par `home`). `pLight` bascule 65↔66 selon que la
-  pièce affichée a au moins une lumière allumée. Un appui sur l'ampoule
+- **Lumières** (`main/ui/ui.c:home_page_tick`) : `pLight` reflète l'état de la
+  **pièce affichée** (`rooms_current()`), via `rooms_lights_on_in(room)`
+  (`rooms.c`) — pas `rooms_lights_on()` qui reste volontairement globale
+  (toutes pièces confondues, utilisée par `/status` et le log de boot, pas par
+  `home`). `pLight` bascule 65↔66 selon que la pièce affichée a au moins une
+  lumière allumée. Un appui sur l'ampoule
   (`mLightToggle`, `ACT_LIGHT_TOGGLE`) bascule les lumières de cette même
   pièce (`rooms_toggle_current()`) : si l'une au moins est allumée, les
   éteint toutes, sinon les allume toutes — cohérent avec ce que `pLight`

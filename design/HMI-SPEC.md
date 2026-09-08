@@ -142,7 +142,7 @@ suit et le firmware affiche la mauvaise image.
 | 29 | garde | 1×1 |
 | 30–55 | icônes d'interface, par paires inactive/active | 32×32 |
 | 56–64 | icône météo de `home.pWx` (aplatie sur la carte dégradée) | 64×64 |
-| 65–66 | ampoule de la tuile Lumières (`pLight`), éteinte/allumée — aplatie sur le dégradé de la tuile en `16,99` | 64×64 |
+| 65–66 | badge circulaire de la tuile Lumières (`pLight`), éteint/allumé — aplati sur le dégradé de la tuile, centré (voir `SLOT_HOME_LIGHT` dans `gen_images.py`) | 88×88 |
 
 Les deux blocs météo suivent le **même ordre de conditions** — `sunny`,
 `clear-night`, `partlycloudy`, `cloudy`, `rainy`, `snowy`, `lightning`,
@@ -162,7 +162,7 @@ de chaque page — coût nul en ressources.
 
 Faute de canal alpha, une icône posée sur un dégradé est aplatie sur le
 **morceau exact de fond qu'elle recouvre** : elle est liée à sa position.
-Déplacer `pWx` (`26,232` sur `home`), `pLight` (`16,99`), `pNow` (`24,54`) ou
+Déplacer `pWx` (`26,232` sur `home`), `pLight` (centré dans la tuile Lumières, voir `SLOT_HOME_LIGHT`), `pNow` (`24,54`) ou
 la bande des `pD*` (`y=236`) dans l'Editor oblige à corriger `SLOT_*` dans
 `gen_images.py` et à régénérer, sinon un rectangle de la mauvaise teinte
 apparaît autour du glyphe.
@@ -230,9 +230,7 @@ partiel » dans le plan de fork) — l'ordre réel n'a pas d'importance.
 |---|---|---|
 | `tClock` | Text (f2) | heure |
 | `tDate` | Text (f0) | date |
-| `pLight` | Picture | ampoule de la tuile Lumières (65 éteinte / 66 allumée) |
-| `tRoom` | Text | pièce par défaut |
-| `tLights` | Text | ex. « 3 allumées » |
+| `pLight` | Picture | badge circulaire de la tuile Lumières (65 éteint / 66 allumé), centré dans la tuile |
 | `tTemp` | Text (f1) | température mesurée (entité `climate.*` de la pièce) |
 | `tSet` | Text | consigne (idem) |
 | `pWx` | Picture | icône météo courante |
