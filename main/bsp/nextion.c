@@ -295,22 +295,26 @@ static bool get_sync(const char *name, const char *attr, nx_get_result_t *res)
 
 /* ---- NVS : cache du bitmap de présence, keyé par révision vSpec ---- */
 
-static void nvs_load_cache(int32_t rev)
+/* Renvoie false si le cache est absent OU désaccordé en taille (ex. le nombre
+ * d'objets dans nx_objects.def a changé sans que vSpec ait bougé côté Editor) :
+ * l'appelant doit alors resonder pour de vrai, sinon s_present reste à zéro et
+ * plus aucune page n'est jamais détectée présente (boot bloqué). */
+static bool nvs_load_cache(int32_t rev)
 {
     nvs_handle_t h;
-    if (nvs_open(NX_NVS_NS, NVS_READONLY, &h) != ESP_OK) return;
+    if (nvs_open(NX_NVS_NS, NVS_READONLY, &h) != ESP_OK) return false;
     int32_t cached_rev = -1;
     nvs_get_i32(h, "nx_rev", &cached_rev);
+    bool ok = false;
     if (cached_rev == rev) {
         size_t blen = sizeof(s_present);
         if (nvs_get_blob(h, "nx_bits", s_present, &blen) == ESP_OK && blen == sizeof(s_present)) {
             ESP_LOGI(TAG, "bitmap de présence rechargé du cache NVS (rev %ld)", (long)rev);
-            nvs_close(h);
-            return;
+            ok = true;
         }
     }
     nvs_close(h);
-    /* Cache absent/désaccordé : laisser l'appelant décider de re-sonder. */
+    return ok;
 }
 
 static void nvs_save_cache(int32_t rev)
@@ -372,9 +376,7 @@ void nextion_probe(void)
         return;
     }
 
-    if (cache_matches(s_spec_rev)) {
-        nvs_load_cache(s_spec_rev);
-    } else {
+    if (!cache_matches(s_spec_rev) || !nvs_load_cache(s_spec_rev)) {
         ESP_LOGI(TAG, "sondage complet du .tft (vSpec rev %ld, %d objets)…",
                  (long)s_spec_rev, NX_OBJ_COUNT);
         int found = 0;
