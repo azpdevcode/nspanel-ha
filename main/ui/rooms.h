@@ -46,6 +46,12 @@ void rooms_climate_state(int i, float *cur_temp, float *set_temp, bool *ok);
 int  rooms_current(void);
 void rooms_set_current(int i);
 
+/** Bascule toutes les lumières de la pièce actuellement affichée : si l'une
+ *  d'elles au moins est allumée, les éteint toutes ; sinon les allume toutes.
+ *  No-op si la pièce n'a aucune lumière ou si le modèle n'est pas encore
+ *  chargé. */
+void rooms_toggle_current(void);
+
 /** Nombre total de lumières suivies / actuellement allumées (toutes pièces
  *  confondues), pour le compteur d'accueil (tLights). */
 int rooms_lights_total(void);

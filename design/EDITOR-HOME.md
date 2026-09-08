@@ -85,10 +85,14 @@ importance, il ne fait que rendre la relecture plus simple.
 
 Les **hotspots** sont l'exception, et pour une raison de protocole : un appui
 remonte la trame `0x65 page cid event` (`main/bsp/nextion.c:504`), qui ne
-transporte pas de nom — seulement deux entiers. `main/ui/nx_nav.def` doit donc
-mapper ces `cid`. L'Editor les attribue par rang de création dans la page, d'où
-la consigne : créer les onze objets pilotés d'abord, les quatre hotspots
-ensuite, ce qui donne 12..15.
+transporte pas de nom — seulement deux entiers. `main/ui/nx_nav.def` (navigation)
+et `main/ui/nx_actions.def` (actions hors navigation, ex. bascule des lumières)
+doivent donc mapper ces `cid`. L'Editor les attribue par rang de création dans
+la page, d'où la consigne : créer les onze objets pilotés d'abord, les cinq
+hotspots ensuite, ce qui donne 12..16 — **`mLightToggle` (bascule des lumières
+de la pièce) doit être créé en DERNIER**, après `mLight`, pour se retrouver
+au-dessus de lui dans l'empilement et intercepter le tactile sur l'ampoule
+plutôt que de laisser `mLight` naviguer vers la page Lumières à cet endroit.
 
 | # | `cid` | `objname` | Type | x | y | w | h | Police | `pco` | Alignement |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -106,12 +110,19 @@ ensuite, ce qui donne 12..15.
 | 12 | 11 | `mHeat` | Hotspot | 224 | 36 | 224 | 156 | — | — | — |
 | 13 | 12 | `mWx` | Hotspot | 8 | 196 | 432 | 118 | — | — | — |
 | 14 | 13 | `mCfg` | Hotspot | 400 | 0 | 48 | 36 | — | — | — |
+| 15 | 14 | `mLightToggle` | Hotspot | 16 | 99 | 64 | 64 | — | — | — |
 
-**Les `cid` ci-dessus sont ceux du `.HMI` réellement monté au 09/2026** —
+**Les `cid` 10..13 ci-dessus sont ceux du `.HMI` réellement monté au 09/2026** —
 l'ancienne barre de navigation basse `p0..p3`/`t0..t3` a été retirée, ce qui a
 renuméroté les hotspots. `main/ui/nx_nav.def` doit rester synchrone avec cette
 colonne `cid` ; en cas de doute, se fier au fichier, pas à ce document, et
 corriger l'un ou l'autre pour qu'ils concordent.
+
+**`mLightToggle` (cid 14) n'est pas encore monté dans l'Editor** : sa valeur
+est *prédite* par le rang de création (5e hotspot de la page), pas vérifiée
+sur un `.tft` réel. Après l'avoir créé, relever le vrai `cid` via `touches`
+dans `/status` (appui sur l'ampoule) et corriger `main/ui/nx_actions.def`
+(`NX_ACT(NXP_HOME, 14, ACT_LIGHT_TOGGLE)`) si besoin.
 
 **La géométrie (x/y/w/h) ci-dessus a été recalculée pour `MASK_R=32`** (voir
 `gen_images.py`), mais **pas encore réappliquée dans l'Editor** : le `.HMI`
@@ -172,6 +183,16 @@ partir de l'id reçu, via `main/ui/nx_nav.def`. Ne pas ajouter de `page N` dans
 l'Editor — la page cible passerait devant un `.tft` partiel et court-circuiterait
 `nx_page_present()`.
 
+`mLightToggle` fait exception à la navigation : son `cid` n'apparaît pas dans
+`nx_nav.def` mais dans `main/ui/nx_actions.def`
+(`NX_ACT(NXP_HOME, 14, ACT_LIGHT_TOGGLE)`), qui appelle
+`rooms_toggle_current()` (`main/ui/rooms.c`) — bascule toutes les lumières de
+la pièce affichée (`rooms_current()`) : si l'une au moins est allumée, les
+éteint toutes, sinon les allume toutes. Mêmes réglages Editor que les autres
+hotspots (Send Component ID sur Touch Press, pas de `page N`) : c'est
+`drain_touches()` (`main/ui/ui.c`) qui fait la différence entre navigation et
+action selon la table où le `(page, cid)` est trouvé.
+
 ## 3. Images utilisées par cette page
 
 | `pic` | Fichier | Objet | Remarque |
@@ -191,7 +212,13 @@ aplat `COL_CARD` ; ce n'est plus vrai depuis qu'elle est en dégradé.)
 ## 4. Ce que fait le firmware une fois le `.tft` en place
 
 - **Lumières** (`main/ui/ui.c:home_page_tick`) : `tRoom`/`tLights` reflètent la
-  pièce affichée (`rooms.c`) ; `pLight` bascule 65↔66 sur `rooms_lights_on()`.
+  pièce affichée (`rooms.c`) ; `pLight` bascule 65↔66 sur `rooms_lights_on()`
+  (compteur global, toutes pièces confondues — `rooms.h`). Un appui sur
+  l'ampoule (`mLightToggle`, `ACT_LIGHT_TOGGLE`) bascule en revanche les
+  lumières de la **pièce affichée uniquement** (`rooms_toggle_current()`) : si
+  l'une au moins est allumée, les éteint toutes, sinon les allume toutes.
+  `pLight` ne reflétant que l'état global, il peut donc ne pas changer
+  immédiatement si d'autres pièces restent allumées après l'appui.
 - **Chauffage** : `tTemp`/`tSet` et les deux anneaux suivent l'entité
   `climate.*` de la pièce affichée (`rooms_climate_state()`, alimentée par
   `ha_worker.c` — poll de secours + push WebSocket). Tant qu'aucun état n'est

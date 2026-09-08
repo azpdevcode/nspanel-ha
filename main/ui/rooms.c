@@ -258,6 +258,19 @@ int rooms_lights_on(void)
     return n;
 }
 
+void rooms_toggle_current(void)
+{
+    if (s_room_current < 0 || s_room_current >= s_room_count) return;
+    bool any_on = false;
+    for (int i = 0; i < s_glight_count; i++) {
+        if (s_glights[i].room == s_room_current && s_glights[i].is_on) { any_on = true; break; }
+    }
+    for (int i = 0; i < s_glight_count; i++) {
+        if (s_glights[i].room == s_room_current)
+            ha_worker_request_set(s_glights[i].entity, !any_on);
+    }
+}
+
 bool rooms_model_dirty(void)
 {
     if (!s_dirty) return false;

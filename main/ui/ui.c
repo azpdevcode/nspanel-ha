@@ -495,6 +495,9 @@ static void ui_do_action(ui_action_t act)
     char ip[16];
 
     switch (act) {
+    case ACT_LIGHT_TOGGLE:
+        rooms_toggle_current();
+        break;
     case ACT_ROOM_PREV:
     case ACT_ROOM_NEXT: {
         int n = rooms_count();
