@@ -24,6 +24,14 @@ static const char *TAG = "ui";
 
 #define UI_TICK_MS 250
 
+/* Marge après une commande `page <name>` avant de consommer un drapeau
+ * "resynchro à l'entrée de page" (s_home_needs_repaint, s_cfg_needs_sync) :
+ * le Nextion bascule de page de façon asynchrone et sans accusé de réception
+ * (voir nextion.c) — une rafale de dessin envoyée dans le même tick que
+ * `page` arrive pendant que le panneau bascule encore et est perdue ou
+ * tronquée. */
+#define UI_PAGE_SWITCH_GRACE_TICKS 2
+
 /* Noms français en dur : l'ESP-IDF n'embarque pas les locales, strftime("%a")
  * y rend toujours de l'anglais. */
 static const char *const s_days[7] = {
@@ -99,10 +107,22 @@ static volatile bool s_home_needs_repaint;
  * de l'utilisateur : on ne les (re)synchronise qu'à l'entrée sur la page. */
 static volatile bool s_cfg_needs_sync;
 
+/* Compteur de ticks ui_task (incrémenté une fois par itération de boucle) et
+ * tick du dernier changement de page : sert uniquement à mesurer le délai de
+ * grâce UI_PAGE_SWITCH_GRACE_TICKS, pas d'horloge murale. */
+static uint32_t s_ui_ticks;
+static uint32_t s_page_switch_tick;
+
+static bool page_switch_settled(void)
+{
+    return (uint32_t)(s_ui_ticks - s_page_switch_tick) >= UI_PAGE_SWITCH_GRACE_TICKS;
+}
+
 static bool goto_page(nx_page_t p)
 {
     if (!nx_page(p)) return false;   /* page absente du .tft : no-op silencieux */
     s_page = p;
+    s_page_switch_tick = s_ui_ticks;
     if (p == NXP_HOME) s_home_needs_repaint = true;
     if (p == NXP_CFG) s_cfg_needs_sync = true;
     ESP_LOGI(TAG, "page -> %d", (int)p);
@@ -164,7 +184,10 @@ static void drain_touches(void)
         /* Réveil (0x87) : pas de navigation à faire, mais un dessin en cours
          * pendant la veille n'a pas survécu — le forcer si home est affichée. */
         if (t.page == NX_WAKE_PAGE && t.cid == NX_WAKE_CID) {
-            if (s_page == NXP_HOME) s_home_needs_repaint = true;
+            if (s_page == NXP_HOME) {
+                s_page_switch_tick = s_ui_ticks;
+                s_home_needs_repaint = true;
+            }
             continue;
         }
 
@@ -393,7 +416,7 @@ static void home_page_tick(const struct tm *tm)
      * de page (s_home_needs_repaint) — jamais à chaque tick, cf. home_arcs_paint(). */
     bool changed = ok != prev_ok ||
                    (ok && (fabsf(cur - prev_cur) > 0.05f || fabsf(set_t - prev_set) > 0.05f));
-    if (changed || s_home_needs_repaint) {
+    if ((changed || s_home_needs_repaint) && page_switch_settled()) {
         home_arcs_paint(ok, cur, set_t);
         prev_cur = cur; prev_set = set_t; prev_ok = ok;
         s_home_needs_repaint = false;
@@ -459,7 +482,7 @@ static void cfg_page_tick(void)
         set_if_changed(CFG_VER, ver_cache, app->version, force);
     }
 
-    if (s_cfg_needs_sync) {
+    if (s_cfg_needs_sync && page_switch_settled()) {
         nx_set_val(CFG_DIM, settings_brightness());
         nx_set_val(CFG_SLEEP, settings_sleep_enabled() ? settings_sleep_timeout_s() : 0);
         s_cfg_needs_sync = false;
@@ -520,6 +543,7 @@ static void ui_task(void *arg)
 
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(UI_TICK_MS));
+        s_ui_ticks++;
         drain_touches();
 
         /* Gelé le temps d'une manipulation manuelle via /nx (ex. touch_j) :
