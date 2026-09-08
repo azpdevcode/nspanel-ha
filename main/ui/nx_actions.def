@@ -18,6 +18,11 @@
  * 64,64, 5e hotspot de la page, cid PRÉDIT par le rang de création — pas
  * encore vérifié sur le .tft réel, cf. design/EDITOR-HOME.md). Corriger ici
  * si `touches` (/status) donne une autre valeur après montage dans l'Editor.
+ *
+ * NXP_CFG cid 16 (cSleep) : checkbox « veille activée », posée après tVer
+ * dans l'Editor — cid PRÉDIT par le rang de création, pas encore vérifié sur
+ * le .tft réel, cf. design/EDITOR-CFG.md. Corriger ici si `touches` (/status)
+ * donne une autre valeur après montage dans l'Editor.
  */
 NX_ACT(NXP_HOME, 14, ACT_LIGHT_TOGGLE)
 NX_ACT(NXP_CFG,  9, ACT_ROOM_PREV)
@@ -27,3 +32,4 @@ NX_ACT(NXP_CFG,  5, ACT_SLEEP)
 NX_ACT(NXP_CFG, 11, ACT_OTA)
 NX_ACT(NXP_CFG, 12, ACT_TFT)
 NX_ACT(NXP_CFG, 13, ACT_REBOOT)
+NX_ACT(NXP_CFG, 16, ACT_SLEEP_EN)

@@ -61,7 +61,7 @@ contigus, ce qui simplifie leur relevé.
 | 2 | `tDim` | Text | 348 | 60 | 84 | 20 | f0 | 61342 | droite / centré |
 | 3 | `tSleep` | Text | 348 | 106 | 84 | 20 | f0 | 61342 | droite / centré |
 | 4 | `hDim` | Slider (h) | 16 | 86 | 416 | 18 | — | 62963 | `minval`=10, `maxval`=100 |
-| 5 | `hSleep` | Slider (h) | 16 | 132 | 416 | 18 | — | 15335 | `minval`=0, `maxval`=300 |
+| 5 | `hSleep` | Slider (h) | 16 | 132 | 416 | 18 | — | 15335 | `minval`=5, `maxval`=300 |
 | 6 | `tSsid` | Text | 70 | 160 | 362 | 20 | f0 | 61342 | gauche / centré |
 | 7 | `tIp` | Text | 70 | 191 | 362 | 20 | f0 | 61342 | gauche / centré |
 | 8 | `tHa` | Text | 70 | 222 | 362 | 20 | f0 | 61342 | gauche / centré |
@@ -72,14 +72,31 @@ contigus, ce qui simplifie leur relevé.
 | 13 | `bReboot` | Hotspot | 300 | 252 | 132 | 40 | — | — | — |
 | 14 | `bRet` | Hotspot | 0 | 4 | 52 | 48 | — | — | — |
 | 15 | `tVer` | Text | 14 | 298 | 419 | 16 | f0 | 23261 | gauche / centré |
+| 16 | `cSleep` | Checkbox | 90 | 108 | 20 | 20 | — | 15335 | active/désactive la veille, cf. § « Checkbox `cSleep` » |
 
 Les `cid` de cette colonne sont ceux **relevés sur la cible**, pas une
 prédiction : le premier composant d'une page porte le `cid` **1** (le `0` est
 la page elle-même), puis l'ordre de création. `tVer` se retrouve en 15 parce
 qu'il a été posé après les hotspots — l'ordre du tableau reflète le `.HMI` réel.
-Recréer un composant lui donne un nouveau `cid` et décale tout : dans ce cas,
-toucher la zone et relire `touches` dans `/status`, puis corriger
-`nx_nav.def`/`nx_actions.def`.
+`cSleep` (16) est posé en dernier, après `tVer` : c'est une **prédiction**, pas
+encore vérifiée sur cible (cf. `main/ui/nx_actions.def`). Recréer un composant
+lui donne un nouveau `cid` et décale tout : dans ce cas, toucher la zone et
+relire `touches` dans `/status`, puis corriger `nx_nav.def`/`nx_actions.def`.
+
+### Checkbox `cSleep`
+
+Coche « veille activée », posée à droite du libellé « VEILLE » (dessiné dans le
+fond à `16,112`, cf. `design/images/gen_images.py:bg_cfg`) — zone laissée
+vierge dans le fond, aucune retouche d'image nécessaire. Contrairement à
+`hDim`/`hSleep`, une Checkbox Nextion se dessine avec ses propres bitmaps
+internes (pas de `picc`/`sta=crop image` à poser dessus).
+
+- `pco` = **`COL_HOME` 15335** (même teinte que `hSleep`, cohérence visuelle
+  avec le réglage qu'elle gouverne).
+- Cochée = veille active (le curseur `hSleep` fixe alors le délai) ; décochée
+  = jamais de veille, quelle que soit la position de `hSleep`. Remplace l'ancien
+  bricolage « `hSleep` à 0 = désactivée » : le curseur ne descend plus en
+  dessous de 5 s (`minval`=5 ci-dessus), il ne sert plus qu'au délai.
 
 Un `cid` juste ne suffit pas : sans **Send Component ID** (§ 4) l'écran n'émet
 rien du tout et le bouton est mort.
@@ -103,13 +120,13 @@ rail au repos) à `COL_CARD2` **6406** — même valeur que `COL_CARD2_565` dans
 `main/ui/ui.c` — c'est ce qui remplace visuellement le rail qu'on aurait pu
 dessiner dans le fond.
 
-### `vscope` = **global** sur les neuf premiers
+### `vscope` = **global** sur les dix premiers
 
-`tRoom`, `tDim`, `tSleep`, `hDim`, `hSleep`, `tSsid`, `tIp`, `tHa`, `tVer` :
-passer `vscope` de `local` (le défaut de l'Editor) à **`global`**. Sans ça le
-firmware ne les voit pas depuis `home` au moment du sondage, marque la page
-absente, et **le bouton Config de `home` ne fait rien** — `nx_page()` refuse
-une page sans ancre. Les six hotspots peuvent rester `local`.
+`tRoom`, `tDim`, `tSleep`, `hDim`, `hSleep`, `tSsid`, `tIp`, `tHa`, `tVer`,
+`cSleep` : passer `vscope` de `local` (le défaut de l'Editor) à **`global`**.
+Sans ça le firmware ne les voit pas depuis `home` au moment du sondage, marque
+la page absente, et **le bouton Config de `home` ne fait rien** — `nx_page()`
+refuse une page sans ancre. Les six hotspots peuvent rester `local`.
 
 ### Fond de chaque composant : `sta` = **Crop Image**, `picc` = **5**
 
@@ -136,6 +153,11 @@ Tout à vide, sauf éventuellement `tVer` (« … » en attendant). Le firmware
   Slider en glissant — il relit `cfg.hDim.val`/`cfg.hSleep.val` en réponse à
   l'événement de relâche (`nx_get_num()`, `main/bsp/nextion.c`) ; réagir dès
   l'appui donnerait une valeur instable.
+- **Checkbox** (`cSleep`) : même consigne que les Sliders, **Send Component
+  ID** sur *Touch Release Event* uniquement (`ui_do_action:ACT_SLEEP_EN` est
+  déclenché sur relâche, cf. `main/ui/ui.c:act_is_release`) — l'Editor bascule
+  déjà `.val` tout seul au toucher, réagir à l'appui relirait potentiellement
+  l'ancienne valeur si l'écran n'a pas fini de la commuter.
 - **Diagnostic d'un bouton inerte**, dans cet ordre : le tableau `touches` de
   `/status` est-il vide pour cette page ? Alors c'est **Send Component ID** qui
   manque (`sendkey=0` dans le `.HMI`) — l'écran n'a rien émis. S'il contient
@@ -149,9 +171,15 @@ Tout à vide, sauf éventuellement `tVer` (« … » en attendant). Le firmware
 - `main/ui/ui.c:cfg_page_tick()` maintient `tRoom`, `tDim`, `tSleep`, `tSsid`,
   `tIp`, `tHa`, `tVer` à jour, au même rythme que `home_page_tick()` (écriture
   seulement sur changement, resynchro forcée toutes les ~20 s).
-- `hDim`/`hSleep` (`.val`) ne sont écrits par le firmware **qu'à l'entrée sur
-  la page** (`s_cfg_needs_sync`) — jamais à chaque tick, sinon le curseur
-  sauterait sous le doigt pendant un glissé.
+- `hDim`/`hSleep`/`cSleep` (`.val`) ne sont écrits par le firmware **qu'à
+  l'entrée sur la page** (`s_cfg_needs_sync`) — jamais à chaque tick, sinon le
+  curseur sauterait sous le doigt pendant un glissé (et la checkbox
+  clignoterait sous le doigt de la même façon).
+- `cSleep` gouverne `settings_sleep_enabled()` : décochée, la veille est
+  désactivée quel que soit le délai réglé sur `hSleep` (`thsp=0` envoyé à
+  l'écran, cf. `main/ui/settings.c:settings_save_sleep_enabled`) ; cochée,
+  `hSleep` (5-300 s) reprend effet immédiatement. `tSleep` affiche « désactivée »
+  ou le délai en cours en conséquence (`main/ui/ui.c:cfg_page_tick`).
 - `bRoomPrev`/`bRoomNext` appellent `rooms_set_current()` **et**
   `settings_save_default_room()` : le choix est immédiat sur `home` et survit
   au redémarrage (persisté par nom, cf. `main/ui/settings.h`).
@@ -175,12 +203,13 @@ devient un no-op silencieux. Puis, panneau alimenté :
 ```
 curl -X POST --data-urlencode "cmd=get cfg.tRoom.txt"  http://<panneau>/nx   # 70 … = présent
 curl -X POST --data-urlencode "cmd=get cfg.hDim.val"   http://<panneau>/nx   # 71 … = lisible
+curl -X POST --data-urlencode "cmd=get cfg.cSleep.val" http://<panneau>/nx   # 71 … = lisible (0/1)
 curl -X POST --data-urlencode 'cmd=cfg.tSsid.txt="Livebox"' http://<panneau>/nx  # pas de pavé uni autour → sta/picc bons
 ```
 
 **Relevé des `cid` réels** — la colonne « cid prévu » n'est qu'une prédiction
-issue de l'ordre de création ci-dessus : toucher chaque hotspot et chaque
-Slider (relâche comprise), puis
+issue de l'ordre de création ci-dessus : toucher chaque hotspot, chaque
+Slider et la Checkbox (relâche comprise), puis
 
 ```
 curl http://<panneau>/status | jq .touches

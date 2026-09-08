@@ -145,12 +145,14 @@ int ui_touch_history(ui_touch_rec_t *out, int max)
     return have;
 }
 
-/* ACT_DIM/ACT_SLEEP sont les deux seules actions déclenchées sur RELÂCHE
- * (Slider : la valeur n'est stable qu'une fois le doigt levé) ; toutes les
- * autres actions, comme la navigation, se déclenchent sur APPUI. */
+/* ACT_DIM/ACT_SLEEP/ACT_SLEEP_EN sont les seules actions déclenchées sur
+ * RELÂCHE (Slider : la valeur n'est stable qu'une fois le doigt levé ; la
+ * checkbox cSleep suit la même convention pour que son .val soit posé quand
+ * on le relit) ; toutes les autres actions, comme la navigation, se
+ * déclenchent sur APPUI. */
 static bool act_is_release(ui_action_t act)
 {
-    return act == ACT_DIM || act == ACT_SLEEP;
+    return act == ACT_DIM || act == ACT_SLEEP || act == ACT_SLEEP_EN;
 }
 
 static void ui_do_action(ui_action_t act);
@@ -484,7 +486,8 @@ static void cfg_page_tick(void)
 
     if (s_cfg_needs_sync && page_switch_settled()) {
         nx_set_val(CFG_DIM, settings_brightness());
-        nx_set_val(CFG_SLEEP, settings_sleep_enabled() ? settings_sleep_timeout_s() : 0);
+        nx_set_val(CFG_SLEEP, settings_sleep_timeout_s());
+        nx_set_val(CFG_SLEEP_EN, settings_sleep_enabled());
         s_cfg_needs_sync = false;
     }
 }
@@ -512,13 +515,10 @@ static void ui_do_action(ui_action_t act)
         if (nx_get_num(CFG_DIM, &v)) settings_save_brightness((int)v);
         break;
     case ACT_SLEEP:
-        if (nx_get_num(CFG_SLEEP, &v)) {
-            if (v <= 0) settings_save_sleep_enabled(0);
-            else {
-                settings_save_sleep_timeout((int)v);
-                settings_save_sleep_enabled(1);
-            }
-        }
+        if (nx_get_num(CFG_SLEEP, &v)) settings_save_sleep_timeout((int)v);
+        break;
+    case ACT_SLEEP_EN:
+        if (nx_get_num(CFG_SLEEP_EN, &v)) settings_save_sleep_enabled(v != 0);
         break;
     case ACT_OTA:
     case ACT_TFT:
