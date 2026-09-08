@@ -192,21 +192,26 @@ def icon_on_patch(page_img, xy, glyph, size, fg):
     return patch.convert("RGB")
 
 
-def badge_on_patch(page_img, xy, glyph, size, ring_color, fill_color, glyph_color,
-                   ring_w=7):
-    """Badge circulaire (anneau + disque) aplati sur le fond, glyphe centré.
+def badge_on_patch(page_img, xy, glyph, size, layers, glyph_color):
+    """Badge circulaire (anneaux concentriques + disque) aplati sur le fond,
+    glyphe centré.
 
-    Reprend le principe d'`icon_on_patch()` (aplatissement sur le morceau de
-    fond réellement recouvert), mais dessine un badge rond façon « bouton »
-    plutôt qu'un glyphe nu — cf. pLight (ampoule de la tuile Lumières)."""
+    `layers` : [(rayon, couleur), ...] du plus grand au plus petit — chaque
+    cercle est peint par-dessus le précédent, donnant autant d'anneaux que
+    d'éléments moins un (le dernier est le disque central plein). Reprend le
+    principe d'`icon_on_patch()` (aplatissement sur le morceau de fond
+    réellement recouvert), mais dessine un badge rond façon « bouton » plutôt
+    qu'un glyphe nu — cf. pLight (ampoule de la tuile Lumières)."""
     x, y = xy
     patch = page_img.crop((x, y, x + size, y + size)).convert("RGBA")
     d = ImageDraw.Draw(patch)
-    d.ellipse((0, 0, size - 1, size - 1), fill=ring_color)
-    d.ellipse((ring_w, ring_w, size - 1 - ring_w, size - 1 - ring_w), fill=fill_color)
+    cx = cy = size / 2.0
+    for radius, color in layers:
+        d.ellipse((cx - radius, cy - radius, cx + radius - 1, cy + radius - 1),
+                 fill=color)
     gsize = int(size * 0.45)
     goff = (size - gsize) // 2
-    patch.alpha_composite(svg_rgba(glyph, gsize, glyph_color, fill_color), (goff, goff))
+    patch.alpha_composite(svg_rgba(glyph, gsize, glyph_color, layers[-1][1]), (goff, goff))
     return patch.convert("RGB")
 
 
@@ -558,13 +563,15 @@ def main(outdir):
     LIGHT_OFF_FILL = mix(LIGHTS, CARD2, 25)   # disque bleu-gris sombre
     LIGHT_OFF_RING = mix(LIGHTS, CARD2, 55)   # anneau un cran plus clair
     LIGHT_ON_FILL  = LIGHTS                   # disque doré plein
-    LIGHT_ON_RING  = mix("#ffffff", LIGHTS, 200)  # anneau légèrement éclairci (halo)
-    for suffix, ring, fill, glyph_col in (
-        ("off", LIGHT_OFF_RING, LIGHT_OFF_FILL, TXT),
-        ("on",  LIGHT_ON_RING,  LIGHT_ON_FILL,  CARD),
+    LIGHT_ON_EDGE  = mix(LIGHTS, "#ffffff", 235)  # fin anneau jaune, légèrement éclairci
+    _R = HOME_LIGHT_SIZE // 2                 # 44
+    for suffix, layers, glyph_col in (
+        ("off", [(_R, LIGHT_OFF_RING), (_R - 7, LIGHT_OFF_FILL)], TXT),
+        # allumée : disque doré → anneau noir → fin anneau jaune (du centre au bord)
+        ("on",  [(_R, LIGHT_ON_EDGE), (_R - 4, "#000000"), (_R - 11, LIGHT_ON_FILL)], CARD),
     ):                                                        # 65–66
         emit(badge_on_patch(pages["bg_home"], SLOT_HOME_LIGHT, "light",
-                            HOME_LIGHT_SIZE, ring, fill, glyph_col),
+                            HOME_LIGHT_SIZE, layers, glyph_col),
              "home_light64_" + suffix, "home", "pLight",
              "ampoule de la tuile Lumières, %s — badge aplati sur le dégradé en %s"
              % (suffix, SLOT_HOME_LIGHT))
