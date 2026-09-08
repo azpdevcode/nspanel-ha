@@ -123,6 +123,14 @@ du rayon sûr et se faisait effacer par la resynchro périodique du texte (voir
 §1). Garder une marge malgré tout (x+w ≤ 439, bord droit de la tuile − 8) pour
 ne pas déborder de la carte.
 
+### `vscope` = **global** sur tous les objets écrits par le firmware
+
+`tClock`, `tDate`, `tRoom`, `tLights`, `tTemp`, `tSet`, `pWx`, `tWxT`, `tWxC`,
+`pLight` : `vscope` = **`global`** (déjà le cas dans le `.HMI`). C'est ce qui
+les rend joignables sous `home.<objet>.<attr>` depuis n'importe quelle page —
+donc sondables au boot. Règle valable pour toute page ajoutée ensuite, voir
+`HMI-SPEC.md` § `vscope`. Les hotspots peuvent rester `local`.
+
 ### Fond de chaque composant : `sta` = **Crop Image**, `picc` = **1**
 
 Pour **tous** les Text ci-dessus, mettre `sta` à `crop image` et `picc` à `1`.

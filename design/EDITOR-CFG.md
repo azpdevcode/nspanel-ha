@@ -50,28 +50,45 @@ carte de version.
 
 ## 3. Composants, dans l'ordre de création
 
-Comme sur `home` : le firmware n'adresse les objets que par leur nom pour les
-neuf premiers (ordre de montage indifférent), mais les **hotspots** remontent
-un `cid` numérique nu (`0x65 page cid event`) — les créer en dernier pour
-qu'ils soient contigus, ce qui simplifie leur relevé.
+Comme sur `home` : le firmware adresse les neuf objets nommés par leur nom
+(ordre de montage indifférent), mais les **hotspots** remontent un `cid`
+numérique nu (`0x65 page cid event`) — les créer en bloc pour qu'ils soient
+contigus, ce qui simplifie leur relevé.
 
-| # | cid prévu | `objname` | Type | x | y | w | h | Police | `pco` | Notes |
-|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | — | `tRoom` | Text | 66 | 26 | 270 | 20 | f1 | 61342 | gauche / centré |
-| 2 | — | `tDim` | Text | 355 | 60 | 84 | 20 | f0 | 61342 | droite / centré |
-| 3 | — | `tSleep` | Text | 355 | 106 | 84 | 20 | f0 | 61342 | droite / centré |
-| 4 | — | `hDim` | Slider (h) | 16 | 86 | 423 | 18 | — | 62963 | `minval`=10, `maxval`=100 |
-| 5 | — | `hSleep` | Slider (h) | 16 | 132 | 423 | 18 | — | 15335 | `minval`=0, `maxval`=300 |
-| 6 | — | `tSsid` | Text | 70 | 160 | 369 | 20 | f0 | 61342 | gauche / centré |
-| 7 | — | `tIp` | Text | 70 | 191 | 369 | 20 | f0 | 61342 | gauche / centré |
-| 8 | — | `tHa` | Text | 70 | 222 | 369 | 20 | f0 | 61342 | gauche / centré |
-| 9 | — | `tVer` | Text | 14 | 298 | 426 | 16 | f0 | 23261 | gauche / centré |
-| 10 | 10 | `bRoomPrev` | Hotspot | 353 | 6 | 46 | 46 | — | — | — |
-| 11 | 11 | `bRoomNext` | Hotspot | 393 | 6 | 46 | 46 | — | — | — |
-| 12 | 12 | `bOta` | Hotspot | 16 | 252 | 134 | 40 | — | — | — |
-| 13 | 13 | `bTft` | Hotspot | 160 | 252 | 134 | 40 | — | — | — |
-| 14 | 14 | `bReboot` | Hotspot | 304 | 252 | 134 | 40 | — | — | — |
-| 15 | 15 | `bRet` | Hotspot | 0 | 4 | 52 | 48 | — | — | — |
+| cid | `objname` | Type | x | y | w | h | Police | `pco` | Notes |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | `tRoom` | Text | 66 | 26 | 270 | 20 | f1 | 61342 | gauche / centré |
+| 2 | `tDim` | Text | 355 | 60 | 84 | 20 | f0 | 61342 | droite / centré |
+| 3 | `tSleep` | Text | 355 | 106 | 84 | 20 | f0 | 61342 | droite / centré |
+| 4 | `hDim` | Slider (h) | 16 | 86 | 423 | 18 | — | 62963 | `minval`=10, `maxval`=100 |
+| 5 | `hSleep` | Slider (h) | 16 | 132 | 423 | 18 | — | 15335 | `minval`=0, `maxval`=300 |
+| 6 | `tSsid` | Text | 70 | 160 | 369 | 20 | f0 | 61342 | gauche / centré |
+| 7 | `tIp` | Text | 70 | 191 | 369 | 20 | f0 | 61342 | gauche / centré |
+| 8 | `tHa` | Text | 70 | 222 | 369 | 20 | f0 | 61342 | gauche / centré |
+| 9 | `bRoomPrev` | Hotspot | 353 | 6 | 46 | 46 | — | — | — |
+| 10 | `bRoomNext` | Hotspot | 393 | 6 | 46 | 46 | — | — | — |
+| 11 | `bOta` | Hotspot | 16 | 252 | 134 | 40 | — | — | — |
+| 12 | `bTft` | Hotspot | 160 | 252 | 134 | 40 | — | — | — |
+| 13 | `bReboot` | Hotspot | 304 | 252 | 134 | 40 | — | — | — |
+| 14 | `bRet` | Hotspot | 0 | 4 | 52 | 48 | — | — | — |
+| 15 | `tVer` | Text | 14 | 298 | 426 | 16 | f0 | 23261 | gauche / centré |
+
+Les `cid` de cette colonne sont ceux **relevés sur la cible**, pas une
+prédiction : le premier composant d'une page porte le `cid` **1** (le `0` est
+la page elle-même), puis l'ordre de création. `tVer` se retrouve en 15 parce
+qu'il a été posé après les hotspots — l'ordre du tableau reflète le `.HMI` réel.
+Recréer un composant lui donne un nouveau `cid` et décale tout : dans ce cas,
+toucher la zone et relire `touches` dans `/status`, puis corriger
+`nx_nav.def`/`nx_actions.def`.
+
+Un `cid` juste ne suffit pas : sans **Send Component ID** (§ 4) l'écran n'émet
+rien du tout et le bouton est mort.
+
+Les `x`/`w` ci-dessus suivent exactement la géométrie dessinée dans
+`design/images/gen_images.py:bg_cfg` — **ne pas les élargir/décaler pour
+compenser un décalage tactile constaté au doigt** : voir `HMI-SPEC.md` § « Biais
+tactile » pour la vraie cause (bezel NSPanel EU, corrigé une fois pour toutes
+via `lcd_dev` dans `Program.s`, pas ici par page).
 
 `pco` en RGB565 décimal, arrondis depuis la palette (`COL_TXT` 61342,
 `COL_TXT_FAINT` 23261 pour `tVer`, `COL_LIGHTS` 62963 pour la barre de `hDim`,
@@ -79,6 +96,14 @@ qu'ils soient contigus, ce qui simplifie leur relevé.
 rail au repos) à `COL_CARD2` **6406** — même valeur que `COL_CARD2_565` dans
 `main/ui/ui.c` — c'est ce qui remplace visuellement le rail qu'on aurait pu
 dessiner dans le fond.
+
+### `vscope` = **global** sur les neuf premiers
+
+`tRoom`, `tDim`, `tSleep`, `hDim`, `hSleep`, `tSsid`, `tIp`, `tHa`, `tVer` :
+passer `vscope` de `local` (le défaut de l'Editor) à **`global`**. Sans ça le
+firmware ne les voit pas depuis `home` au moment du sondage, marque la page
+absente, et **le bouton Config de `home` ne fait rien** — `nx_page()` refuse
+une page sans ancre. Les six hotspots peuvent rester `local`.
 
 ### Fond de chaque composant : `sta` = **Crop Image**, `picc` = **5**
 
@@ -105,6 +130,13 @@ Tout à vide, sauf éventuellement `tVer` (« … » en attendant). Le firmware
   Slider en glissant — il relit `cfg.hDim.val`/`cfg.hSleep.val` en réponse à
   l'événement de relâche (`nx_get_num()`, `main/bsp/nextion.c`) ; réagir dès
   l'appui donnerait une valeur instable.
+- **Diagnostic d'un bouton inerte**, dans cet ordre : le tableau `touches` de
+  `/status` est-il vide pour cette page ? Alors c'est **Send Component ID** qui
+  manque (`sendkey=0` dans le `.HMI`) — l'écran n'a rien émis. S'il contient
+  une entrée avec un `cid` inattendu, c'est la table `nx_nav.def` /
+  `nx_actions.def` qu'il faut aligner sur ce `cid`. Cas vécu le 2026-09-08 :
+  les deux à la fois, `sendkey` non coché sur cinq hotspots **et** table
+  décalée de 1.
 
 ## 5. Ce que fait le firmware une fois le `.tft` en place
 
