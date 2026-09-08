@@ -134,8 +134,8 @@ NAVY_LT   = _c("COL_NAVY_LT")         # titre/icône de la carte Météo
 SKY_T     = _c("SKY_DAY_T")           # dégradé météo, haut
 SKY_B     = _c("SKY_DAY_B")           # dégradé météo, bas
 
-F_REG  = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-F_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+F_REG  = "/usr/share/fonts/truetype/montserrat-semibold/Montserrat-SemiBold.ttf"
+F_BOLD = "/usr/share/fonts/truetype/montserrat-semibold/Montserrat-SemiBold.ttf"
 
 # Conditions météo : l'ordre EST le contrat avec le firmware (base + index).
 WX = ["sunny", "clear-night", "partlycloudy", "cloudy", "rainy",
