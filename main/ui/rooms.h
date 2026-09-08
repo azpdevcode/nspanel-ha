@@ -34,6 +34,12 @@ const char *rooms_name(int i);
 /** Nombre de lumières de la pièce `i`. */
 int rooms_light_count(int i);
 
+/** Nombre de lumières actuellement allumées dans la pièce `i` (sous-ensemble
+ *  de rooms_light_count(i)) — pour la tuile Lumières de l'accueil, qui doit
+ *  refléter la pièce affichée, pas la maison entière (cf. rooms_lights_on()
+ *  ci-dessous, volontairement global). */
+int rooms_lights_on_in(int i);
+
 /** Entité climate.* de la pièce `i` (chaîne vide si aucune). */
 const char *rooms_climate_entity(int i);
 

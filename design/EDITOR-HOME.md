@@ -211,14 +211,17 @@ aplat `COL_CARD` ; ce n'est plus vrai depuis qu'elle est en dégradé.)
 
 ## 4. Ce que fait le firmware une fois le `.tft` en place
 
-- **Lumières** (`main/ui/ui.c:home_page_tick`) : `tRoom`/`tLights` reflètent la
-  pièce affichée (`rooms.c`) ; `pLight` bascule 65↔66 sur `rooms_lights_on()`
-  (compteur global, toutes pièces confondues — `rooms.h`). Un appui sur
-  l'ampoule (`mLightToggle`, `ACT_LIGHT_TOGGLE`) bascule en revanche les
-  lumières de la **pièce affichée uniquement** (`rooms_toggle_current()`) : si
-  l'une au moins est allumée, les éteint toutes, sinon les allume toutes.
-  `pLight` ne reflétant que l'état global, il peut donc ne pas changer
-  immédiatement si d'autres pièces restent allumées après l'appui.
+- **Lumières** (`main/ui/ui.c:home_page_tick`) : `tRoom`, `tLights` et `pLight`
+  reflètent tous les trois la **pièce affichée** (`rooms_current()`) —
+  `tLights`/`pLight` via `rooms_lights_on_in(room)`/`rooms_light_count(room)`
+  (`rooms.c`), pas `rooms_lights_on()`/`rooms_lights_total()` qui restent
+  volontairement globales (toutes pièces confondues, utilisées par `/status`
+  et le log de boot, pas par `home`). `pLight` bascule 65↔66 selon que la
+  pièce affichée a au moins une lumière allumée. Un appui sur l'ampoule
+  (`mLightToggle`, `ACT_LIGHT_TOGGLE`) bascule les lumières de cette même
+  pièce (`rooms_toggle_current()`) : si l'une au moins est allumée, les
+  éteint toutes, sinon les allume toutes — cohérent avec ce que `pLight`
+  affiche.
 - **Chauffage** : `tTemp`/`tSet` et les deux anneaux suivent l'entité
   `climate.*` de la pièce affichée (`rooms_climate_state()`, alimentée par
   `ha_worker.c` — poll de secours + push WebSocket). Tant qu'aucun état n'est

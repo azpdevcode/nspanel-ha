@@ -258,6 +258,14 @@ int rooms_lights_on(void)
     return n;
 }
 
+int rooms_lights_on_in(int i)
+{
+    int n = 0;
+    for (int k = 0; k < s_glight_count; k++)
+        if (s_glights[k].room == i && s_glights[k].is_on) n++;
+    return n;
+}
+
 void rooms_toggle_current(void)
 {
     if (s_room_current < 0 || s_room_current >= s_room_count) return;

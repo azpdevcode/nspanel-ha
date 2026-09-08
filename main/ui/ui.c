@@ -386,10 +386,12 @@ static void home_page_tick(const struct tm *tm)
     set_if_changed(HOME_ROOM, room_cache, buf, force);
 
     /* Libellé court (cf. design/HMI-SPEC.md: "3 allumées") : la zone tRoom du
-     * .tft tronque au-delà d'une quinzaine de caractères. */
-    int on = rooms_lights_on(), total = rooms_lights_total();
+     * .tft tronque au-delà d'une quinzaine de caractères. Per-pièce (celle
+     * affichée), pas maison entière — rooms_lights_on()/rooms_lights_total()
+     * restent globales pour /status, cf. rooms.h. */
+    int on = rooms_lights_on_in(room), total = rooms_light_count(room);
     if (total == 0) snprintf(buf, sizeof(buf), "aucune lumière");
-    else if (on == 0) snprintf(buf, sizeof(buf), "toutes éteintes");
+    else if (on == 0) snprintf(buf, sizeof(buf), "toute éteinte");
     else snprintf(buf, sizeof(buf), "%d allumée%s", on, on > 1 ? "s" : "");
     set_if_changed(HOME_LIGHTS, lights_cache, buf, force);
 
