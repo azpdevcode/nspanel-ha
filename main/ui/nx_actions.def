@@ -14,17 +14,19 @@
  * Event côté Editor), toutes les autres sur APPUI — voir drain_touches() dans
  * ui.c.
  *
- * NXP_HOME cid 14 (mLightToggle) : hotspot posé sur l'ampoule pLight (16,99,
- * 64,64, 5e hotspot de la page, cid PRÉDIT par le rang de création — pas
- * encore vérifié sur le .tft réel, cf. design/EDITOR-HOME.md). Corriger ici
- * si `touches` (/status) donne une autre valeur après montage dans l'Editor.
+ * NXP_HOME cid 13 (mLightToggle) : hotspot posé sur l'ampoule pLight, 5e et
+ * dernier hotspot créé sur la page. Valeur relevée via `touches` (/status)
+ * le 2026-09-08 — le retrait de tRoom/tLights (2 objets texte créés avant les
+ * hotspots) a décalé toute la page de -2 par rapport à la prédiction initiale
+ * (mLight=8, mHeat=9, mWx=10, mCfg=11 ; cid 12 orphelin, sans doute un
+ * composant supprimé/recréé dans l'Editor — voir nx_nav.def).
  *
  * NXP_CFG cid 16 (cSleep) : checkbox « veille activée », posée après tVer
  * dans l'Editor — cid PRÉDIT par le rang de création, pas encore vérifié sur
  * le .tft réel, cf. design/EDITOR-CFG.md. Corriger ici si `touches` (/status)
  * donne une autre valeur après montage dans l'Editor.
  */
-NX_ACT(NXP_HOME, 14, ACT_LIGHT_TOGGLE)
+NX_ACT(NXP_HOME, 13, ACT_LIGHT_TOGGLE)
 NX_ACT(NXP_CFG,  9, ACT_ROOM_PREV)
 NX_ACT(NXP_CFG, 10, ACT_ROOM_NEXT)
 NX_ACT(NXP_CFG,  4, ACT_DIM)

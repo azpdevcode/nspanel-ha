@@ -12,8 +12,8 @@
  * non sondée, donc déclarer la navigation avant d'avoir dessiné les pages ne
  * casse rien.
  */
-NX_NAV(NXP_HOME, 10, NXP_LIGHTS)
-NX_NAV(NXP_HOME, 11, NXP_CLIMATE)
-NX_NAV(NXP_HOME, 12, NXP_WEATHER)
-NX_NAV(NXP_HOME, 13, NXP_CFG)
+NX_NAV(NXP_HOME, 8,  NXP_LIGHTS)
+NX_NAV(NXP_HOME, 9,  NXP_CLIMATE)
+NX_NAV(NXP_HOME, 10, NXP_WEATHER)
+NX_NAV(NXP_HOME, 11, NXP_CFG)
 NX_NAV(NXP_CFG,  14, NXP_HOME)   /* bRet */
