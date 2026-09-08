@@ -257,7 +257,15 @@ esp_err_t nspanel_io_init(void)
         .mode = GPIO_MODE_OUTPUT,
     };
     gpio_config(&pwr);
-    gpio_set_level(GPIO_SCREEN_PWR, 0);
+    /* Toujours forcer un vrai cycle d'alimentation de l'écran, même si GPIO4
+     * était déjà à 0 avant ce boot (cas d'un esp_restart() après OTA) : le
+     * Nextion a son propre MCU (STM32G0), qui n'est PAS réinitialisé par un
+     * redémarrage logiciel de l'ESP32. Sans coupure réelle, son état interne
+     * (dont un plantage éventuel) survit à l'esp_restart() et l'écran reste
+     * noir/muet tant qu'on ne débranche pas manuellement le secteur. */
+    gpio_set_level(GPIO_SCREEN_PWR, 1);              /* écran OFF */
+    vTaskDelay(pdMS_TO_TICKS(300));                  /* décharge avant rallumage */
+    gpio_set_level(GPIO_SCREEN_PWR, 0);              /* écran ON */
 
     /* Relais. */
     gpio_config_t rly = {
