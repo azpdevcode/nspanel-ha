@@ -560,7 +560,15 @@ static void ui_task(void *arg)
         if (s_page == NXP_BOOT) {
             if (synced && nx_page_present(NXP_HOME)) goto_page(NXP_HOME);
             else boot_page_tick();
-        } else if (s_page != NXP_HOME) {
+        } else if (s_page != NXP_HOME && !nextion_is_asleep()) {
+            /* Ne jamais envoyer `page` pendant la veille écran (thsp) : le
+             * panneau l'ignore visuellement (rien ne s'affiche avant réveil)
+             * mais nx_page() croit le changement appliqué, ce qui désynchronise
+             * s_page de la page réellement affichée — les dessins (anneaux
+             * home) et les actions tactiles suivantes seraient alors routés
+             * sur la mauvaise page. Le réveil (0x87) relit s_page tel quel ;
+             * si l'inactivité est toujours dépassée, ce test la rattrape au
+             * tick suivant, une fois l'écran effectivement éveillé. */
             uint32_t now_s = (uint32_t)(esp_timer_get_time() / 1000000);
             if (now_s - s_last_touch_s >= ui_timeout_s()) {
                 ESP_LOGI(TAG, "inactivité : retour à home");

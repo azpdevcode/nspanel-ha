@@ -50,6 +50,16 @@ typedef struct {
 #define NX_WAKE_CID  0xFFu
 
 /**
+ * @brief true entre un endormissement automatique de l'écran (0x86, thsp) et
+ * son réveil (0x87). Sert à ne pas envoyer de commande `page` pendant la
+ * veille : l'écran l'ignore visuellement (rien ne s'affiche avant réveil)
+ * mais nx_page() n'a aucun moyen de le savoir et croit le changement appliqué,
+ * ce qui désynchronise la page suivie par le firmware de celle réellement
+ * affichée à l'écran.
+ */
+bool nextion_is_asleep(void);
+
+/**
  * @brief Initialise l'UART vers l'écran, négocie le débit, sonde les objets.
  *
  * Ordre : GPIO alimentation écran (voir nspanel_io.h) doit déjà être haut.

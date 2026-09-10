@@ -503,6 +503,13 @@ void nx_dim(uint8_t pct)
 
 /* ---- Tâche RX : événements tactiles + veille ---- */
 
+static volatile bool s_asleep;
+
+bool nextion_is_asleep(void)
+{
+    return s_asleep;
+}
+
 #define NX_RX_POLL_MS  100   /* borne le blocage dans uart_read_bytes() pour que
                                 * la pause coopérative (s_rx_paused) reste réactive */
 
@@ -522,7 +529,11 @@ static void rx_task(void *arg)
                 xQueueSend(s_touch_q, &t, 0);
             }
             break;
+        case 0x86: /* endormissement automatique (thsp) */
+            s_asleep = true;
+            break;
         case 0x87: { /* réveil tactile pendant le sommeil écran */
+            s_asleep = false;
             nx_touch_t t = { .page = NX_WAKE_PAGE, .cid = NX_WAKE_CID, .pressed = 1 };
             xQueueSend(s_touch_q, &t, 0);
             break;
