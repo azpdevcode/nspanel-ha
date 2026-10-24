@@ -10,6 +10,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include "esp_err.h"
 
 #ifdef __cplusplus
@@ -47,6 +48,12 @@ const char *rooms_climate_entity(int i);
  *  `*ok` est false tant qu'aucun état n'est arrivé, ou si l'entité HA est
  *  `unavailable` — distingue « pas encore su » de « 0 °C ». */
 void rooms_climate_state(int i, float *cur_temp, float *set_temp, bool *ok);
+
+/** Dernier état connu de l'entité météo (CONFIG_HA_WEATHER_ENTITY, une seule,
+ *  hors modèle de pièces) — poll de secours ou push WS, cf. rooms_climate_state()
+ *  pour la sémantique de `*ok`. `condition` est le `state` HA brut (ex.
+ *  "rainy"), à charge de l'appelant (ui.c) de le traduire en icône/libellé. */
+void rooms_weather_state(char *condition, size_t condition_len, float *temp_c, bool *ok);
 
 /** Pièce actuellement affichée par l'écran lumières (0 par défaut). */
 int  rooms_current(void);

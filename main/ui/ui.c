@@ -278,9 +278,11 @@ static bool resync_due(void)
 }
 
 /* Écrit un placeholder neutre une seule fois dans les champs pas encore
- * alimentés par le firmware (météo : phase 3, temp. intérieure/NTC : phase 4)
- * — mieux que le "newtxt" par défaut de l'Editor laissé à l'écran. No-op
- * silencieux si l'objet est absent du .tft, comme partout ailleurs. */
+ * alimentés par le firmware (temp. intérieure/NTC : phase 4) — mieux que le
+ * "newtxt" par défaut de l'Editor laissé à l'écran. tWxT/tWxC sont repris dès
+ * le premier état météo connu (home_page_tick) ; jusque-là ce placeholder
+ * évite le texte de l'Editor. No-op silencieux si l'objet est absent du
+ * .tft, comme partout ailleurs. */
 static void home_page_placeholders_once(void)
 {
     static bool done;
@@ -288,6 +290,38 @@ static void home_page_placeholders_once(void)
     done = true;
     nx_set_txt(HOME_WX_TEMP, "--");
     nx_set_txt(HOME_WX_COND, "--");
+}
+
+/* Mapping condition HA (weather.*, `state`) → index de l'icône `home.pWx`
+ * (Picture 56 + index) : même ordre que WX dans design/images/gen_images.py,
+ * repris de design/HMI-SPEC.md — `fog` sert de repli pour `exceptional` et
+ * toute condition inconnue. Libellé FR affiché dans tWxC en regard. */
+static void weather_icon(const char *condition, int *pic, const char **label_fr)
+{
+    struct { const char *cond; int idx; const char *label; } map[] = {
+        { "sunny",           0, "Ensoleillé" },
+        { "clear-night",     1, "Ciel dégagé" },
+        { "partlycloudy",    2, "Éclaircies" },
+        { "cloudy",          3, "Nuageux" },
+        { "rainy",           4, "Pluie" },
+        { "pouring",         4, "Forte pluie" },
+        { "snowy",           5, "Neige" },
+        { "snowy-rainy",     5, "Neige/pluie" },
+        { "lightning",       6, "Orage" },
+        { "lightning-rainy", 6, "Orage" },
+        { "hail",            6, "Grêle" },
+        { "windy",           7, "Vent" },
+        { "windy-variant",   7, "Vent" },
+    };
+    for (size_t i = 0; i < sizeof(map) / sizeof(map[0]); i++) {
+        if (strcmp(condition, map[i].cond) == 0) {
+            *pic = 56 + map[i].idx;
+            *label_fr = map[i].label;
+            return;
+        }
+    }
+    *pic = 56 + 8;   /* fog : repli pour exceptional/fog/inconnu */
+    *label_fr = "--";
 }
 
 /* ---- Anneaux de chauffage (page home) ----
@@ -361,7 +395,9 @@ static void home_page_tick(const struct tm *tm)
 {
     static char clock_cache[UI_CACHE_LEN], date_cache[UI_CACHE_LEN];
     static char temp_cache[UI_CACHE_LEN], set_cache[UI_CACHE_LEN];
+    static char wx_temp_cache[UI_CACHE_LEN], wx_cond_cache[UI_CACHE_LEN];
     static int  light_pic_cache = -1;
+    static int  wx_pic_cache = -1;
     static float prev_cur = -1.0f, prev_set = -1.0f;
     static bool  prev_ok;
     char buf[UI_CACHE_LEN];
@@ -391,6 +427,27 @@ static void home_page_tick(const struct tm *tm)
         nx_set_val(HOME_LIGHT_PIC, light_pic);
         light_pic_cache = light_pic;
     }
+
+    /* Tuile météo : entité fixe (CONFIG_HA_WEATHER_ENTITY, rooms.c), pas liée
+     * à la pièce affichée. Icône et texte seulement sur changement (comme
+     * l'ampoule), pas de repaint d'anneau ici. */
+    char wx_cond[24];
+    float wx_temp;
+    bool wx_ok;
+    rooms_weather_state(wx_cond, sizeof(wx_cond), &wx_temp, &wx_ok);
+
+    int wx_pic;
+    const char *wx_label;
+    weather_icon(wx_ok ? wx_cond : "", &wx_pic, &wx_label);
+    if (wx_pic != wx_pic_cache || force) {
+        nx_set_val(HOME_WX_PIC, wx_pic);
+        wx_pic_cache = wx_pic;
+    }
+
+    if (wx_ok) snprintf(buf, sizeof(buf), "%.0f°", wx_temp);
+    else       snprintf(buf, sizeof(buf), "--");
+    set_if_changed(HOME_WX_TEMP, wx_temp_cache, buf, force);
+    set_if_changed(HOME_WX_COND, wx_cond_cache, wx_label, force);
 
     /* Chauffage : entité climate de la pièce affichée (rooms.c). */
     float cur, set_t;

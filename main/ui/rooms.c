@@ -12,6 +12,7 @@
 #include "esp_timer.h"
 #include "cJSON.h"
 
+#include "sdkconfig.h"
 #include "wifi.h"
 #include "ha_client.h"
 #include "ha_ws.h"
@@ -146,6 +147,30 @@ static void apply_rooms_json(const char *json)
     ha_worker_set_tracked(ids, nid);
 
     ESP_LOGI(TAG, "modèle pièces: %d pièce(s), %d lumière(s)", s_room_count, s_glight_count);
+}
+
+/* Météo : une seule entité globale (CONFIG_HA_WEATHER_ENTITY), hors du tableau
+ * s_rooms — même sémantique ok que le climate (cf. on_climate_state). */
+static struct { char condition[24]; float temp; bool ok; } s_weather;
+
+static void on_weather_state(const ha_weather_state_t *st, void *user)
+{
+    (void)user;
+    s_weather.ok = st->ok && st->condition[0];
+    if (s_weather.ok) {
+        strncpy(s_weather.condition, st->condition, sizeof(s_weather.condition) - 1);
+        s_weather.condition[sizeof(s_weather.condition) - 1] = '\0';
+        s_weather.temp = st->temperature;
+    }
+}
+
+void rooms_weather_state(char *condition, size_t condition_len, float *temp_c, bool *ok)
+{
+    *ok = s_weather.ok;
+    if (condition && condition_len) {
+        snprintf(condition, condition_len, "%s", s_weather.ok ? s_weather.condition : "");
+    }
+    *temp_c = s_weather.ok ? s_weather.temp : 0;
 }
 
 static void on_light_state(const char *entity_id, bool on, void *user)
@@ -301,6 +326,10 @@ static void rooms_watchdog_task(void *arg)
 
     ha_worker_set_light_cb(on_light_state, NULL);
     ha_worker_set_climate_cb(on_climate_state, NULL);
+    if (CONFIG_HA_WEATHER_ENTITY[0]) {
+        ha_worker_set_weather_cb(on_weather_state, NULL);
+        ha_worker_set_weather_entity(CONFIG_HA_WEATHER_ENTITY);
+    }
 
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(ROOMS_TICK_MS));

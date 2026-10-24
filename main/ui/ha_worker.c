@@ -37,10 +37,18 @@ static ha_light_state_cb_t s_light_cb;
 static void                *s_light_user;
 static ha_climate_state_cb_t s_climate_cb;
 static void                  *s_climate_user;
+static char                  s_weather_entity[HA_ENTITY_MAXLEN];
+static ha_weather_state_cb_t s_weather_cb;
+static void                  *s_weather_user;
 
 static bool is_climate(const char *entity_id)
 {
     return strncmp(entity_id, "climate.", 8) == 0;
+}
+
+static bool is_weather(const char *entity_id)
+{
+    return strncmp(entity_id, "weather.", 8) == 0;
 }
 
 /* kind : 0 = action lumière (toggle/turn_on/turn_off), 7 = event poussé (WS),
@@ -92,6 +100,20 @@ void ha_worker_set_climate_cb(ha_climate_state_cb_t cb, void *user)
     s_climate_user = user;
 }
 
+void ha_worker_set_weather_entity(const char *entity_id)
+{
+    if (!entity_id) return;
+    strncpy(s_weather_entity, entity_id, HA_ENTITY_MAXLEN - 1);
+    s_weather_entity[HA_ENTITY_MAXLEN - 1] = '\0';
+    post_sync();
+}
+
+void ha_worker_set_weather_cb(ha_weather_state_cb_t cb, void *user)
+{
+    s_weather_cb = cb;
+    s_weather_user = user;
+}
+
 void ha_worker_pause_poll(bool pause) { s_poll_paused = pause; }
 
 static void enqueue(const cmd_t *c)
@@ -126,6 +148,7 @@ void ha_worker_request_brightness(const char *entity_id, int pct)
 bool ha_worker_tracks(const char *entity_id)
 {
     if (!entity_id || !s_subs_mtx) return false;
+    if (s_weather_entity[0] && strcmp(s_weather_entity, entity_id) == 0) return true;
     bool found = false;
     xSemaphoreTake(s_subs_mtx, portMAX_DELAY);
     for (int i = 0; i < s_sub_count && !found; i++) {
@@ -154,6 +177,11 @@ static void ws_dispatch(const char *entity, const char *json)
         ha_climate_state_t cs;
         if (ha_parse_climate_state(root, &cs) == ESP_OK && s_climate_cb) {
             s_climate_cb(entity, &cs, s_climate_user);
+        }
+    } else if (is_weather(entity)) {
+        ha_weather_state_t ws;
+        if (ha_parse_weather_state(root, &ws) == ESP_OK && s_weather_cb) {
+            s_weather_cb(&ws, s_weather_user);
         }
     } else {
         ha_light_state_t ls;
@@ -222,6 +250,15 @@ static void ha_worker_task(void *arg)
                 if (ha_get_light(local[i], &ls) == ESP_OK && s_light_cb) {
                     s_light_cb(local[i], ls.on, s_light_user);
                 }
+            }
+        }
+
+        /* Météo : entité fixe hors du répertoire s_subs (pas de push par
+         * pièce), sondée au même rythme. */
+        if (s_weather_entity[0] && s_weather_cb) {
+            ha_weather_state_t ws;
+            if (ha_get_weather_state(s_weather_entity, &ws) == ESP_OK) {
+                s_weather_cb(&ws, s_weather_user);
             }
         }
     }

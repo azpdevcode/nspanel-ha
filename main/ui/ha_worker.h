@@ -1,6 +1,6 @@
 /*
  * Worker HA : une seule task sérialise tout le trafic REST bloquant vers Home
- * Assistant (lumières + chauffage — la météo suivra en phase 3). Ne touche
+ * Assistant (lumières, chauffage, météo). Ne touche
  * JAMAIS l'UART écran : c'est la tâche `ui` qui lit le dernier état connu via
  * les callbacks ci-dessous et rend.
  *
@@ -43,6 +43,13 @@ void ha_worker_set_light_cb(ha_light_state_cb_t cb, void *user);
 typedef void (*ha_climate_state_cb_t)(const char *entity_id,
                                       const ha_climate_state_t *st, void *user);
 void ha_worker_set_climate_cb(ha_climate_state_cb_t cb, void *user);
+
+/* Météo : une seule entité fixe (CONFIG_HA_WEATHER_ENTITY), pas de
+ * répertoire par pièce comme light./climate. — posée à part de
+ * ha_worker_set_tracked(), sondée en continu dès qu'elle est renseignée. */
+void ha_worker_set_weather_entity(const char *entity_id);
+typedef void (*ha_weather_state_cb_t)(const ha_weather_state_t *st, void *user);
+void ha_worker_set_weather_cb(ha_weather_state_cb_t cb, void *user);
 
 /* ---- Push temps réel (WebSocket) ----
  * ha_ws filtre les events HA via ha_worker_tracks(), puis transmet ceux qui

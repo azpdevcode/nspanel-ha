@@ -71,6 +71,18 @@ esp_err_t ha_climate_set_preset(const char *entity_id, const char *preset);
 /** Pression atmosphérique d'une entité weather.* (NAN si absente/échec). */
 esp_err_t ha_get_weather_pressure(const char *entity_id, float *pressure);
 
+/** État courant d'une entité weather.* : condition (state, ex. "rainy") et
+ *  température (attributes.temperature). Ne couvre pas les prévisions
+ *  (weather.get_forecasts, posé pour la page dédiée « Météo » en phase 3). */
+typedef struct {
+    char  condition[24];   /* state HA : sunny, cloudy, rainy, ... */
+    float temperature;     /* °C, NAN si absente */
+    bool  ok;
+} ha_weather_state_t;
+
+esp_err_t ha_parse_weather_state(cJSON *root, ha_weather_state_t *out);
+esp_err_t ha_get_weather_state(const char *entity_id, ha_weather_state_t *out);
+
 #ifdef __cplusplus
 }
 #endif

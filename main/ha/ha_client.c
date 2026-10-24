@@ -333,6 +333,40 @@ esp_err_t ha_climate_set_preset(const char *entity_id, const char *preset)
 
 /* ---- Météo ---- */
 
+esp_err_t ha_parse_weather_state(cJSON *root, ha_weather_state_t *out)
+{
+    if (!root || !out) return ESP_ERR_INVALID_ARG;
+    memset(out, 0, sizeof(*out));
+    out->temperature = NAN;
+
+    cJSON *state = cJSON_GetObjectItem(root, "state");
+    if (cJSON_IsString(state)) strncpy(out->condition, state->valuestring, sizeof(out->condition) - 1);
+    cJSON *a = cJSON_GetObjectItem(root, "attributes");
+    if (a) out->temperature = json_num(a, "temperature", NAN);
+    out->ok = true;
+    return ESP_OK;
+}
+
+esp_err_t ha_get_weather_state(const char *entity_id, ha_weather_state_t *out)
+{
+    if (!entity_id || !out) return ESP_ERR_INVALID_ARG;
+    memset(out, 0, sizeof(*out));
+    out->temperature = NAN;
+
+    char path[160];
+    snprintf(path, sizeof(path), "/api/states/%s", entity_id);
+    cJSON *root;
+    esp_err_t err = ha_http_get_json(path, HA_RESP_MAX_LEN, &root);
+    if (err != ESP_OK) return err;
+
+    esp_err_t ret = ha_parse_weather_state(root, out);
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "weather %s = %s %.1f°", entity_id, out->condition, out->temperature);
+    }
+    cJSON_Delete(root);
+    return ret;
+}
+
 esp_err_t ha_get_weather_pressure(const char *entity_id, float *pressure)
 {
     if (!entity_id || !pressure) return ESP_ERR_INVALID_ARG;
